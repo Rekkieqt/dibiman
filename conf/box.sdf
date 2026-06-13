@@ -1,0 +1,51 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="cubic_cardboard_box">
+    <pose>0 0 0 0 0 0</pose>
+    <link name="link">
+      <inertial>
+        <mass>2</mass>
+        <inertia>
+          <ixx>0.053333</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.053333</iyy>
+          <iyz>0</iyz>
+          <izz>0.053333</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <box>
+            <size>0.4 0.4 0.4</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.3</mu>
+              <mu2>0.3</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>50000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.002</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://rigid_cubic_cardbox_40x40x40/meshes/cubic_cardbox.dae</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,32 @@
+<application>
+    <name>iCub Gazebo Sim</name>
+
+    <dependencies>
+    </dependencies>
+
+    <module>
+        <name>gzserver</name>
+	<parameters>-e dart icub-gazebo-grasping-sandbox.sdf</parameters>
+        <node>localhost</node>
+    </module>
+
+    <module>
+        <name>gzclient</name>
+        <node>localhost</node>
+    </module>
+
+    <module>
+        <name>yarprobotinterface</name>
+	<parameters>--config ${SIM_XML} --from ${SIM_INI} </parameters>
+        <dependencies>
+            <port timeout="20">/icubSim/torso/state:o</port>
+            <port timeout="20">/icubSim/left_arm/state:o</port>
+            <port timeout="20">/icubSim/right_arm/state:o</port>
+        </dependencies>
+        <ensure>
+            <wait when="stop">5</wait>
+        </ensure>
+        <node>localhost</node>
+    </module>
+
+</application>

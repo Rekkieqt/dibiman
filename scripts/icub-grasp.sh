@@ -1,0 +1,75 @@
+#!/bin/bash
+
+################################################################################
+#                                                                              #
+# Copyright (C) 2020 Fondazione Istitito Italiano di Tecnologia (IIT)          #
+# All Rights Reserved.                                                         #
+#                                                                              #
+################################################################################
+
+# launch the demo
+run() {
+    if [[ $# -eq 0 ]]; then
+      app="icub-grasp.xml"
+      random_pose="on"
+    elif [ "$1" == "test" ]; then
+      app="icub-grasp-test.xml"
+      random_pose="off"
+    else
+      echo "unknown option!"
+      exit 1
+    fi
+
+    yarpserver --write --silent &
+    yarp wait /root > /dev/null
+    yarpmanager-console --application ${ROBOTOLOGY_SUPERBUILD_INSTALL_PREFIX}/share/ICUBcontrib/applications/${app} --run --connect --exit --silent
+    
+    yarp wait /icub-grasp/rpc
+    echo "go ${random_pose}" | yarp rpc /icub-grasp/rpc
+
+    sleep 5
+    declare -a modules=("icub-gazebo-grasping-sandbox" "find-superquadric" "yarpview")
+    for module in ${modules[@]}; do
+        killall ${module}
+    done
+
+    sleep 5
+    declare -a modules=("iKinGazeCtrl" "iKinCartesianSolver" "yarprobotinterface")
+    for module in ${modules[@]}; do
+        killall ${module}
+    done
+
+    sleep 5
+    declare -a modules=("gzclient" "gzserver" "yarpserver")
+    for module in ${modules[@]}; do
+        killall ${module}
+    done
+}
+
+# clean up hanging up resources
+clean() {
+    declare -a modules=("icub-gazebo-grasping-sandbox" "find-superquadric" \
+                        "yarpview" "iKinGazeCtrl" "iKinCartesianSolver" \
+                        "yarprobotinterface" "gzclient" "gzserver" "yarpserver")
+    for module in ${modules[@]}; do
+        killall -9 ${module}
+    done
+}
+
+# main
+if [[ $# -eq 0 ]]; then
+    echo "demo is starting up..."
+    run
+    echo "...demo done"
+elif [ "$1" == "test" ]; then
+    echo "test is starting up..."
+    run test
+    echo "...test done"
+elif [ "$1" == "clean" ]; then
+    echo "cleaning up resources..."
+    clean
+    echo "...cleanup done"
+else
+    echo "unknown option!"
+    exit 1
+fi

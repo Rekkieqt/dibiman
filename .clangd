@@ -1,0 +1,9 @@
+CompileFlags:
+  Add: [
+    "-I./include",
+    "-I/usr/local/include",
+    "-I/home/ubuntu/dev/otherlib/include",
+    "-I/home/ubuntu/robotology-superbuild/build/install/include",
+    "-I/home/ubuntu/miniforge3/envs/masters/include/",
+    "-I/home/ubuntu/miniforge3/envs/masters/include/eigen3"
+  ]
