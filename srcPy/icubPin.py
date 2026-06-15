@@ -1,12 +1,44 @@
 import sys
 import os
-# print(dir(cpin)) -> prints callable functions
 import casadi
 from casadi import *
 from plotTraj import *
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
+# print(dir(cpin)) -> prints callable functions
+
+
+def inverseModel(model, modOpts):
+    cmodel = cpin.Model(model)
+    cdata = cmodel.createData()
+    dt = modOpts['tf']
+
+    # u = casadi.SX.sym("tau", cmodel.nv)
+    # rnea = casadi.SX.sym("rnea", cmodel.nv)
+
+    q = casadi.SX.sym("q", cmodel.nq)
+    a = casadi.SX.sym("a", cmodel.nv)
+    v = casadi.SX.sym("v", cmodel.nv)
+
+    qk = casadi.SX.sym("qd", cmodel.nq)
+    vk = casadi.SX.sym("vd", cmodel.nv)
+    ak = casadi.SX.sym("a", cmodel.nv)
+
+    qk = q + vk * dt #cpin.integrate(model, q, vk) # for floating base
+    vk = v + ak * dt
+
+    x = casadi.vertcat(q, v, a)
+    xk = casadi.vertcat(qk, vk, ak)
+
+    Fk = casadi.Function('xk', [q, v, a], [qk, vk, ak] ['qk', 'vk', 'ak'], ['qk+1', 'vk+1', 'ak+1']).expand()
+
+    # RNEA
+    rnea = cpin.rnea(cmodel, cdata, q, v, a)
+    cpin.computeRNEADerivatives(cmodel, cdata, q, v, a)
+    hk = casadi.Function('rnea', [q, v, a], [rnea],['q', 'v', 'a'], ['rnea']).expand()
+
+    return Fk, hk
 
 
 def getArmModel(params):
@@ -34,7 +66,7 @@ def getArmModel(params):
     return model, data
 
 
-def getCasFunc(model, intOpts):
+def forwardModel(model, modOpts):
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
 
@@ -45,31 +77,9 @@ def getCasFunc(model, intOpts):
     xd = casadi.SX.sym("xd", cmodel.nv)
     x = casadi.SX.sym("x", cmodel.nq)
 
-    """
-    Cartesian model specific:
-        J = cpin.computeJointJacobians(cmodel, cdataArm, q) # Joint Jacobian J
-        dJ = cpin.computeJointJacobiansTimeVariation(cmodel, cdataArm, q, v) # dJ/dt
-        # H = cpin.crba(cmodel, cdata, q) # Inertia matrix H(q)
-        # h = cpin.nonLinearEffects(cmodel, cdata, q, v) # non-linear effects h(q, qd)
-        xdd = [x , J @ qdd + dJ @ v]
-        qxd = [qdd, xdd]
-
-    """
-    # ABA Variant
+    # ABA
     qdd = cpin.aba(cmodel, cdata, q, v, tau)  # ODE format of the manipulator dynamics
     cpin.computeABADerivatives(cmodel, cdata, q, v, tau)
-
-    # RNEA Variant
-    rnea = cpin.rnea(cmodel, cdata, q, v, a)
-    cpin.computeRNEADerivatives(cmodel, cdata, q, v, a)
-
-    # FK q -> XYZ , Quaternion
-    cpin.forwardKinematics(cmodel, cdata, q)
-    cpin.updateFramePlacements(cmodel, cdata)
-
-    H = cdata.oMf[6]
-    H = cpin.SE3ToXYZQUAT(H)
-    Hf = casadi.Function('Hf', [q], [H], ['q'], ['eH'])
 
     # ABA Derivatives
     ddq_dq = cdata.ddq_dq
@@ -82,9 +92,9 @@ def getCasFunc(model, intOpts):
     df_dx = casadi.horzcat(df_dq, df_dv)
 
     df_du = casadi.vertcat(np.zeros((model.nv, model.nv)), ddq_dtau)
-
     abaJac = casadi.horzcat(df_dx, df_du)
 
+    # Define f(x) model
     x = casadi.vertcat(q, v)
     u = tau
     dx = casadi.vertcat(v, qdd)
@@ -94,20 +104,30 @@ def getCasFunc(model, intOpts):
     xd_f = casadi.Function('xd_f', [x, u], [dx], ['x', 'u'], ['dx'],
                             {"custom_jacobian": fJ, "jac_penalty": 0}).expand()
 
-    Fk = integrator(xd_f, intOpts)
+    Fk = integrator(xd_f, modOpts)
 
+    """
+        COST FUNCTION FOR FORWARD KINEMATICS
+        # FK q -> XYZ , Quaternion
+        cpin.forwardKinematics(cmodel, cdata, q)
+        cpin.updateFramePlacements(cmodel, cdata)
+
+        H = cdata.oMf[6]
+        H = cpin.SE3ToXYZQUAT(H)
+        Hf = casadi.Function('Hf', [q], [H], ['q'], ['eH'])
+    """
     return Fk
 
 
-def integrator(F, intOpts):
+def integrator(F, modOpts):
 
     """
     Integrate the dynamics
     """
-    tf = intOpts['tf']
-    t0 = intOpts['t0']
+    tf = modOpts['tf']
+    t0 = modOpts['t0']
 
-    method = intOpts['method']
+    method = modOpts['method']
     x0 = SX.sym('x0', F.size_in(0))
     u = SX.sym('u', F.size_in(1))
     xk = x0
@@ -127,21 +147,8 @@ def integrator(F, intOpts):
             xk = xk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
         Fk = Function('Fk', [x0, u], [xk],['x0','u'],['xf']).expand()
-        # dae = {'x': x,
-        #        'p': u,
-        #        'ode': F(x, u)}
 
-        # opts = {
-        #         'simplify': True,
-        #         'number_of_finite_elements': 4
-        #         }
-        # intg = casadi.integrator('rk4', 'rk', dae, t0, tf, opts)
-        # intRes = intg(x0=x, p=u)
-        # xk = intRes['xf']
-        # F = casadi.Function('qddInt', [x, u], [xk], ['x', 'u'], ['xk+1'])
-        # bN = F.mapaccum(H)
-
-    else:
+    elif method == 'euler':
 
         xk = xk + tf * F(x0, u)
         Fk = Function('Fk', [x0, u], [xk],['x0','u'],['xf']).expand()
@@ -149,19 +156,19 @@ def integrator(F, intOpts):
     return Fk
 
 
-def getNLP(F, solOpts):
+def getNLPsolver(F, solOpts):
     opti = casadi.Opti()
     r = solOpts['r']
     q = solOpts['q']
     H = solOpts['H']
+    # h = modOpts['hk']
+
     nq = F.size_in(0)[0]
     nu = F.size_in(1)[0]
 
     R = r * casadi.DM.eye(nu)
     Q = q * casadi.DM.eye(nq)
 
-    # x = opti.variable(nq, H + 1)
-    # u = opti.variable(nu, H)
     x0 = opti.parameter(nq, )
     xrf = opti.parameter(nq, )
     urf = opti.parameter(nu, )
@@ -173,6 +180,7 @@ def getNLP(F, solOpts):
         U.append(opti.variable(nu))
     X.append(opti.variable(nq))
 
+    # Cost function
     obj = 0
     for i in range(H):
         obj += mtimes([(X[i + 1] - xrf).T, Q, X[i + 1] - xrf])
@@ -180,22 +188,26 @@ def getNLP(F, solOpts):
 
     opti.minimize(obj)
 
+    # Subject to the model/ descrete function
+
     opti.subject_to(X[0]==x0)
 
     for k in range(H):
       opti.subject_to(X[k + 1]==F(X[k], U[k]))
+      # opti.subject_to(hk(X[k]==U[k]))
+      
 
     opti
     opts = {
             'print_time': 1,
             'expand': True,
-            # 'jit': True,
+            'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
             # 'ipopt.hessian_approximation': 'limited-memory',
             # 'ipopt.print_level': 0,
             # 'ipopt.tol': 1e-3
-            'fatrop.tol': 1e-3,
-            'fatrop.max_iter': 200,
+            # 'fatrop.tol': 1e-3,
+            # 'fatrop.max_iter': 200,
             'fatrop.print_level': 0,
             'structure_detection': 'auto'
             }
@@ -203,7 +215,7 @@ def getNLP(F, solOpts):
     opti.solver('fatrop', opts)
 
     M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
-    M = M.map(2, 'openmp')
+    # M = M.map(2, 'openmp')
 
     return M
 
@@ -220,20 +232,23 @@ def main():
             "joints": jointsToFree,
             "arm": 'r_'
             }
-    intOpts = {
+    modOpts = {
             't0': 0,
             'tf': 0.05,
             'method': 'euler'
             }
+    model, data = getArmModel(pinOpts)
+    F = forwardModel(model, modOpts)
+    # F, h = inverseModel(model, modOpts)
+
     solOpts = {
             'H': 15,
             'r': 1,
             'q': 7
+            # 'hk': h
             }
 
-    model, data = getArmModel(pinOpts)
-    F = getCasFunc(model, intOpts)
-    M = getNLP(F, solOpts)
+    M = getNLPsolver(F, solOpts)
 
     """
     Control Loop
@@ -249,7 +264,7 @@ def main():
     xref = np.concatenate((qref, v0), axis=0)
 
     T = 5
-    Ts = intOpts['tf']
+    Ts = modOpts['tf']
     N = int(T/Ts)
     t = np.linspace(0, T, N+1)
     x = [None] * (N + 1)
