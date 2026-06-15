@@ -12,33 +12,27 @@ import pinocchio.casadi as cpin
 def inverseModel(model, modOpts):
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
-    dt = modOpts['tf']
+    """
+    Acceleration and Torque as inputs to the system
 
-    # u = casadi.SX.sym("tau", cmodel.nv)
-    # rnea = casadi.SX.sym("rnea", cmodel.nv)
-
+    """
     q = casadi.SX.sym("q", cmodel.nq)
     a = casadi.SX.sym("a", cmodel.nv)
     v = casadi.SX.sym("v", cmodel.nv)
 
-    qk = casadi.SX.sym("qd", cmodel.nq)
-    vk = casadi.SX.sym("vd", cmodel.nv)
-    ak = casadi.SX.sym("a", cmodel.nv)
+    # Simplified dynamics
+    x = casadi.vertcat(q, v)
+    dx = casadi.vertcat(v, a)
+    F = casadi.Function('dx', [x, a], [dx], ['x', 'a'], ['dx'])
 
-    qk = q + vk * dt #cpin.integrate(model, q, vk) # for floating base
-    vk = v + ak * dt
+    # Direct discretization, explicit euler
+    Fk = integrator(F, modOpts)
 
-    x = casadi.vertcat(q, v, a)
-    xk = casadi.vertcat(qk, vk, ak)
+    # RNEA Function
+    tau = cpin.rnea(cmodel, cdata, q, v, a)
+    h = casadi.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'])
 
-    Fk = casadi.Function('xk', [q, v, a], [qk, vk, ak] ['qk', 'vk', 'ak'], ['qk+1', 'vk+1', 'ak+1']).expand()
-
-    # RNEA
-    rnea = cpin.rnea(cmodel, cdata, q, v, a)
-    cpin.computeRNEADerivatives(cmodel, cdata, q, v, a)
-    hk = casadi.Function('rnea', [q, v, a], [rnea],['q', 'v', 'a'], ['rnea']).expand()
-
-    return Fk, hk
+    return Fk, h
 
 
 def getArmModel(params):
@@ -72,7 +66,6 @@ def forwardModel(model, modOpts):
 
     tau = casadi.SX.sym("tau", cmodel.nv)
     q = casadi.SX.sym("q", cmodel.nq)
-    a = casadi.SX.sym("a", cmodel.nq)
     v = casadi.SX.sym("v", cmodel.nv)
     xd = casadi.SX.sym("xd", cmodel.nv)
     x = casadi.SX.sym("x", cmodel.nq)
@@ -156,12 +149,79 @@ def integrator(F, modOpts):
     return Fk
 
 
-def getNLPsolver(F, solOpts):
+def rneaOCP(F, h, solOpts):
     opti = casadi.Opti()
     r = solOpts['r']
     q = solOpts['q']
     H = solOpts['H']
-    # h = modOpts['hk']
+
+    na = F.size_in(1)[0]
+    nx = F.size_in(0)[0]
+    nu = h.size_in(1)[0]
+    nxa = nx + na
+
+    R = r * casadi.DM.eye(nu)
+    Qx = q * casadi.DM.eye(nxa)
+    Qa = r * casadi.DM.eye(na)
+
+    x0 = opti.parameter(nx, )
+    xrf = opti.parameter(nx, )
+    urf = opti.parameter(nu, )
+
+    X = []
+    A = []
+    U = []
+    for k in range(H):
+        # X.append(opti.variable(nx))
+        # A.append(opti.variable(na))
+        X.append(opti.variable(nxa))
+        U.append(opti.variable(nu))
+
+    X.append(opti.variable(nxa))
+
+    # Cost function
+    obj = 0
+    for i in range(H):
+        obj += mtimes([(X[i + 1] - xrf).T, Qx, X[i + 1] - xrf])
+        obj += mtimes([(U[i]).T, R, U[i]])
+        # obj += mtimes([A[i].T, Qa, A[i]])
+    opti.minimize(obj)
+
+    # Subject to the model/ descrete function
+    opti.subject_to(X[0] == x0)
+    for k in range(H):
+        opti.subject_to(X[k + 1][:nxa] == F(X[k][:nxa]))
+      # opti.subject_to(h(X[k], A[k]) == U[k])
+      opti.subject_to(h(X[k]) == U[k])
+
+    opts = {
+            'print_time': 1,
+            'expand': True,
+            # 'jit': True,
+            # 'jit_options': {'flags': '-O3', 'verbose': True},
+            'ipopt.hessian_approximation': 'limited-memory',
+            'ipopt.max_iter': 50,
+            # 'ipopt.print_level': 0,
+            # 'ipopt.tol': 1e-3
+            # 'fatrop.tolerance': 1e-3,
+            # 'fatrop.max_iter': 200,
+            # 'fatrop.print_level': 0,
+            # 'structure_detection': 'auto'
+            }
+
+    opti.solver('ipopt', opts)
+
+    M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
+    # M = M.map(2, 'openmp')
+
+    return M
+
+
+def abaOCP(F, solOpts):
+    opti = casadi.Opti()
+    r = solOpts['r'] # input cost
+    q = solOpts['q'] # state cost
+    H = solOpts['H'] # horizon length
 
     nq = F.size_in(0)[0]
     nu = F.size_in(1)[0]
@@ -188,31 +248,26 @@ def getNLPsolver(F, solOpts):
 
     opti.minimize(obj)
 
-    # Subject to the model/ descrete function
-
-    opti.subject_to(X[0]==x0)
-
+    # Subject to the model/ discrete function
+    opti.subject_to(X[0] == x0)
     for k in range(H):
-      opti.subject_to(X[k + 1]==F(X[k], U[k]))
-      # opti.subject_to(hk(X[k]==U[k]))
-      
+        opti.subject_to(X[k + 1] == F(X[k], U[k]))
 
-    opti
     opts = {
             'print_time': 1,
             'expand': True,
-            'jit': True,
+            # 'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
-            # 'ipopt.hessian_approximation': 'limited-memory',
+            'ipopt.hessian_approximation': 'limited-memory'
             # 'ipopt.print_level': 0,
             # 'ipopt.tol': 1e-3
-            # 'fatrop.tol': 1e-3,
+            # 'fatrop.tolerance': 1e-3,
             # 'fatrop.max_iter': 200,
-            'fatrop.print_level': 0,
-            'structure_detection': 'auto'
+            # 'fatrop.print_level': 0,
+            # 'structure_detection': 'auto'
             }
 
-    opti.solver('fatrop', opts)
+    opti.solver('ipopt', opts)
 
     M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
     # M = M.map(2, 'openmp')
@@ -238,23 +293,22 @@ def main():
             'method': 'euler'
             }
     model, data = getArmModel(pinOpts)
-    F = forwardModel(model, modOpts)
-    # F, h = inverseModel(model, modOpts)
+    # F = forwardModel(model, modOpts)
+    F, h = inverseModel(model, modOpts)
 
     solOpts = {
-            'H': 15,
+            'H': 25,
             'r': 1,
-            'q': 7
-            # 'hk': h
+            'q': 1
             }
 
-    M = getNLPsolver(F, solOpts)
+    M = rneaOCP(F, h, solOpts)
 
     """
     Control Loop
     """
-    nq = model.nv
     nv = model.nv
+    nq = model.nv
     nu = model.nv
     q0 = pin.randomConfiguration(model)
     v0 = np.zeros([nv, ])
@@ -277,17 +331,19 @@ def main():
         x[i + 1] = np.squeeze(F(x[i], u[i]))
 
     # Printing last result and references
-    # print(x[-1])
-    # print(u[-1])
-    # print(xref)
-    # print(uref)
+    print(x[-1])
+    print(u[-1])
+    print(xref)
+    print(uref)
 
     # --------------PLOTS-----------
     try:
         import matplotlib.pyplot as plt
         plotData = {
                 'x': x,
+                'u': u,
                 'xref': xref,
+                'uref': uref,
                 't': t,
                 'N': N
                 }
