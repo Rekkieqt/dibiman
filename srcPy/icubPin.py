@@ -12,6 +12,7 @@ import pinocchio.casadi as cpin
 def inverseModel(model, modOpts):
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
+    tf = modOpts['tf']
     """
     Acceleration and Torque as inputs to the system
 
@@ -23,16 +24,25 @@ def inverseModel(model, modOpts):
     # Simplified dynamics
     x = casadi.vertcat(q, v)
     dx = casadi.vertcat(v, a)
-    F = casadi.Function('dx', [x, a], [dx], ['x', 'a'], ['dx'])
+    # F = casadi.Function('dx', [x], [dx], ['x'], ['dx'])
+    qk = q + tf * v
+    vk = v + tf * a
+    xk = casadi.vertcat(qk, vk)
+    # F(vk, ak) = (qk, vk)
+    Fk = casadi.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk'])
 
     # Direct discretization, explicit euler
-    Fk = integrator(F, modOpts)
+    # Fk = integrator(F, modOpts)
+    # xk = casadi.vertcat(v, a)
+    # xk = xk + tf * F(x)
+    # Fk = Function('Fk', [x], [xk], ['x0'], ['xf'])
 
     # RNEA Function
     tau = cpin.rnea(cmodel, cdata, q, v, a)
-    h = casadi.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'])
+    # h = casadi.Function('rnea', [x], [tau], ['x'], ['tau'])
+    hk = casadi.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'])
 
-    return Fk, h
+    return Fk, hk
 
 
 def getArmModel(params):
@@ -155,61 +165,65 @@ def rneaOCP(F, h, solOpts):
     q = solOpts['q']
     H = solOpts['H']
 
-    na = F.size_in(1)[0]
+    # na = F.size_in(1)[0]
     nx = F.size_in(0)[0]
-    nu = h.size_in(1)[0]
-    nxa = nx + na
+    na = F.size_in(1)[0]
+    nu = h.size_out(0)[0]
 
     R = r * casadi.DM.eye(nu)
-    Qx = q * casadi.DM.eye(nxa)
-    Qa = r * casadi.DM.eye(na)
+    Qx = q * casadi.DM.eye(nx)
+    Qa = casadi.DM.eye(na)
 
-    x0 = opti.parameter(nx, )
-    xrf = opti.parameter(nx, )
-    urf = opti.parameter(nu, )
+    x0 = opti.parameter(nx, ) # q, v, a
+    xrf = opti.parameter(nx, ) # q, v, a
+    urf = opti.parameter(nu, ) # tau = RNEA(q, v, a), when a=0, v=0, q=qref
 
     X = []
-    A = []
     U = []
+    A = []
     for k in range(H):
-        # X.append(opti.variable(nx))
-        # A.append(opti.variable(na))
-        X.append(opti.variable(nxa))
+        X.append(opti.variable(nx))
         U.append(opti.variable(nu))
+        A.append(opti.variable(na))
+    X.append(opti.variable(nx))
+    A.append(opti.variable(na))
 
-    X.append(opti.variable(nxa))
+    # X = [opti.variable(nx) for _ in range(H + 1)]
+    # A = [opti.variable(na) for _ in range(H)]
+    # U = [opti.variable(nu) for _ in range(H)]
 
     # Cost function
     obj = 0
     for i in range(H):
+        # obj += mtimes([(X[i + 1] - xrf).T, Qx, X[i + 1] - xrf])
         obj += mtimes([(X[i + 1] - xrf).T, Qx, X[i + 1] - xrf])
-        obj += mtimes([(U[i]).T, R, U[i]])
-        # obj += mtimes([A[i].T, Qa, A[i]])
+        obj += mtimes([(A[i]).T, Qa, A[i]])
+        obj += mtimes([(U[i] - urf).T, R, U[i] - urf])
+
     opti.minimize(obj)
 
     # Subject to the model/ descrete function
     opti.subject_to(X[0] == x0)
     for k in range(H):
-        opti.subject_to(X[k + 1][:nxa] == F(X[k][:nxa]))
-      # opti.subject_to(h(X[k], A[k]) == U[k])
-      opti.subject_to(h(X[k]) == U[k])
+        opti.subject_to(X[k+1] == F(X[k], A[k]))
+        opti.subject_to(U[k] == h(X[k], A[k]))
 
     opts = {
             'print_time': 1,
             'expand': True,
-            # 'jit': True,
+            'debug': True,
+            'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
-            'ipopt.hessian_approximation': 'limited-memory',
-            'ipopt.max_iter': 50,
+            'fatrop.print_level': 0,
+            # 'fatrop.tolerance': 1e-3,
+            # 'fatrop.max_iter': 200
+            'structure_detection': 'auto'
+            # 'ipopt.hessian_approximation': 'limited-memory',
             # 'ipopt.print_level': 0,
             # 'ipopt.tol': 1e-3
-            # 'fatrop.tolerance': 1e-3,
-            # 'fatrop.max_iter': 200,
-            # 'fatrop.print_level': 0,
-            # 'structure_detection': 'auto'
             }
 
-    opti.solver('ipopt', opts)
+    opti.solver('fatrop', opts)
 
     M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
     # M = M.map(2, 'openmp')
@@ -255,16 +269,16 @@ def abaOCP(F, solOpts):
 
     opts = {
             'print_time': 1,
-            'expand': True,
+            # 'expand': True,
             # 'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
-            'ipopt.hessian_approximation': 'limited-memory'
-            # 'ipopt.print_level': 0,
-            # 'ipopt.tol': 1e-3
-            # 'fatrop.tolerance': 1e-3,
-            # 'fatrop.max_iter': 200,
             # 'fatrop.print_level': 0,
+            # 'fatrop.tolerance': 1e-3,
+            # 'fatrop.max_iter': 200
             # 'structure_detection': 'auto'
+            'ipopt.hessian_approximation': 'limited-memory',
+            'ipopt.print_level': 0,
+            'ipopt.tol': 1e-3
             }
 
     opti.solver('ipopt', opts)
@@ -293,16 +307,17 @@ def main():
             'method': 'euler'
             }
     model, data = getArmModel(pinOpts)
-    # F = forwardModel(model, modOpts)
+    Fsim = forwardModel(model, modOpts)
     F, h = inverseModel(model, modOpts)
 
     solOpts = {
-            'H': 25,
+            'H': 15,
             'r': 1,
-            'q': 1
+            'q': 7
             }
 
     M = rneaOCP(F, h, solOpts)
+    # M = abaOCP(Fsim, solOpts)
 
     """
     Control Loop
@@ -315,7 +330,8 @@ def main():
     x0 = np.concatenate((q0, v0), axis=0)
     qref = pin.randomConfiguration(model) # np.random.normal(loc=0.0, scale=.3, size=nq) # 
     uref = pin.rnea(model, data, qref, v0, v0)
-    xref = np.concatenate((qref, v0), axis=0)
+    # xref = np.concatenate((qref, v0), axis=0) for ABA
+    xref = np.concatenate((qref, v0), axis=0) # for RNEA
 
     T = 5
     Ts = modOpts['tf']
@@ -325,15 +341,16 @@ def main():
     u = [None] * N
     x[0] = x0
 
-
     for i in range(N):
         u[i] = np.squeeze(M(x[i], xref, uref))
-        x[i + 1] = np.squeeze(F(x[i], u[i]))
+        x[i + 1] = np.squeeze(Fsim(x[i], u[i]))
 
     # Printing last result and references
+    print('States, last measured vs ref')
     print(x[-1])
-    print(u[-1])
     print(xref)
+    print('Torques, last measured vs ref')
+    print(u[-1])
     print(uref)
 
     # --------------PLOTS-----------
