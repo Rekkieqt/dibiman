@@ -10,47 +10,44 @@ TO-DO:
 
 def plotTraj(data):
     x = data['x']
-    u = data['u']
     t = data['t']
+    title = data['title']
+    xl = data['xlabel']
+    yl = data['ylabel']
     xref = data['xref']
-    uref = data['uref']
-    N = data['N']
+    # uref = data['uref']
+    N = len(x)
+    t = t[:N]
 
     X = np.array(x)
-    Xref = np.tile(xref[:, np.newaxis], (1, N + 1))
+    Xref = np.tile(xref[:, np.newaxis], (1, N))
 
-    U = np.array(u)
-    Uref = np.tile(uref[:, np.newaxis], (1, N))
-
-    plt.figure(1)
+    plt.figure()
     plt.plot(t, X)
     plt.plot(t, Xref.T, '--')
-    plt.title("Joint Positions and Velocities")
-    plt.ylabel("q [rad], v [rad/s]")
-    plt.xlabel("time [s]")
-    plt.show()
-
-    plt.figure(2)
-    plt.plot(t[:N], U)
-    plt.plot(t[:N], Uref.T, '--')
-    plt.title("Joint Input Torques")
-    plt.ylabel("tau [Nm]")
-    plt.xlabel("time [s]")
+    plt.title(title)
+    plt.ylabel(yl)
+    plt.xlabel(xl)
     plt.show()
 
 
 def plot3D(data):
     # Assuming X is your [12, N] state array
-    x = X_sol[0, :]
-    y = X_sol[1, :]
-    z = X_sol[2, :]
+    title = data['title']
+    xl = data['xlabel']
+    x = data['x']
+
+    X = np.array(x)
+    x = X[0, :]
+    y = X[1, :]
+    z = X[2, :]
 
     # Plot
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
     # Trajectory
-    ax.plot(x, y, z, label='Drone Trajectory', color='blue', linewidth=2)
+    ax.plot(x, y, z, label=xl, color='blue', linewidth=2)
     ax.scatter(x[0], y[0], z[0], color='green', label='Start', s=50)
     ax.scatter(x[-1], y[-1], z[-1], color='red', label='End', s=50)
 
@@ -65,7 +62,7 @@ def plot3D(data):
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
 
     # Labels and formatting
-    ax.set_title('3D Drone Flight Trajectory')
+    ax.set_title(title)
     ax.set_xlabel('X [m]')
     ax.set_ylabel('Y [m]')
     ax.set_zlabel('Z [m]')
