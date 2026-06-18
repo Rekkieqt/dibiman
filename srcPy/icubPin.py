@@ -24,22 +24,14 @@ def inverseModel(model, modOpts):
     # Simplified dynamics
     x = casadi.vertcat(q, v)
     dx = casadi.vertcat(v, a)
-    # F = casadi.Function('dx', [x], [dx], ['x'], ['dx'])
+
     qk = q + tf * v
     vk = v + tf * a
     xk = casadi.vertcat(qk, vk)
-    # F(vk, ak) = (qk, vk)
     Fk = casadi.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk'])
-
-    # Direct discretization, explicit euler
-    # Fk = integrator(F, modOpts)
-    # xk = casadi.vertcat(v, a)
-    # xk = xk + tf * F(x)
-    # Fk = Function('Fk', [x], [xk], ['x0'], ['xf'])
 
     # RNEA Function
     tau = cpin.rnea(cmodel, cdata, q, v, a)
-    # h = casadi.Function('rnea', [x], [tau], ['x'], ['tau'])
     hk = casadi.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'])
 
     return Fk, hk
@@ -140,8 +132,6 @@ def integrator(F, modOpts):
         # Fixed step Runge-Kutta 4 integrator
         M = 4 # RK4 steps per interval
         DT = tf/M
-        # f = Function('f', [x, u], [xdot, L])
-
         for j in range(M):
             k1 = F(xk, u)
             k2 = F(xk + DT/2 * k1, u)
@@ -187,10 +177,6 @@ def rneaOCP(F, h, solOpts):
         A.append(opti.variable(na))
     X.append(opti.variable(nx))
     A.append(opti.variable(na))
-
-    # X = [opti.variable(nx) for _ in range(H + 1)]
-    # A = [opti.variable(na) for _ in range(H)]
-    # U = [opti.variable(nu) for _ in range(H)]
 
     # Cost function
     obj = 0
@@ -291,7 +277,6 @@ def abaOCP(F, solOpts):
 
 def main():
     model_path = os.getcwd() + '/../conf/model.urdf'
-    # model = pin.buildModelFromUrdf(model_path)
     jointsToFree = ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch'] #, 'wrist_yaw']
     """
     Option structs
@@ -330,7 +315,6 @@ def main():
     x0 = np.concatenate((q0, v0), axis=0)
     qref = pin.randomConfiguration(model) # np.random.normal(loc=0.0, scale=.3, size=nq) # 
     uref = pin.rnea(model, data, qref, v0, v0)
-    # xref = np.concatenate((qref, v0), axis=0) for ABA
     xref = np.concatenate((qref, v0), axis=0) # for RNEA
 
     T = 5
