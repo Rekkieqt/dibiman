@@ -207,8 +207,8 @@ def abaOCP(F, solOpts):
     # Cost function
     obj = 0
     for i in range(H):
-        obj += mtimes([(X[i + 1] - xrf).T, Q, X[i + 1] - xrf])
-        obj += mtimes([(U[i] - urf).T, R, U[i] - urf])
+        obj += ca.mtimes([(X[i + 1] - xrf).T, Q, X[i + 1] - xrf])
+        obj += ca.mtimes([(U[i] - urf).T, R, U[i] - urf])
 
     opti.minimize(obj)
 
@@ -218,20 +218,20 @@ def abaOCP(F, solOpts):
         opti.subject_to(X[k + 1] == F(X[k], U[k]))
 
     opts = {
-            'print_time': 1,
-            # 'expand': True,
-            # 'jit': True,
+            'print_time': 0,
+            'expand': True,
+            'jit': True,
+            'structure_detection': 'auto',
+            'fatrop.print_level': 0
             # 'jit_options': {'flags': '-O3', 'verbose': True},
-            # 'fatrop.print_level': 0,
             # 'fatrop.tolerance': 1e-3,
             # 'fatrop.max_iter': 200
-            # 'structure_detection': 'auto'
-            'ipopt.hessian_approximation': 'limited-memory',
-            'ipopt.print_level': 0,
-            'ipopt.tol': 1e-3
+            # 'ipopt.hessian_approximation': 'limited-memory',
+            # 'ipopt.print_level': 0,
+            # 'ipopt.tol': 1e-3
             }
 
-    opti.solver('ipopt', opts)
+    opti.solver('fatrop', opts)
 
     M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
     # M = M.map(2, 'openmp')
@@ -265,8 +265,8 @@ def main():
             'q': 7
             }
 
-    M = rneaOCP(F, h, solOpts)
-    # M = abaOCP(Fsim, solOpts)
+    # M = rneaOCP(F, h, solOpts)
+    M = abaOCP(Fsim, solOpts)
 
     """
     Control Loop
@@ -275,6 +275,8 @@ def main():
     nq = model.nv
     nu = model.nq
     q0 = pin.randomConfiguration(model)
+    pin.forwardKinematics(model, data, q0)
+    pin.updateFramePlacements(model, data)
     v0 = np.zeros([nv, ])
     x0 = np.concatenate((q0, v0), axis=0)
     qref = pin.randomConfiguration(model) 
