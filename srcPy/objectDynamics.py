@@ -1,9 +1,8 @@
 import sys
 import os
 
-import casadi
-from casadi import *
-from plotTraj import *
+import casadi as ca
+from utils import *
 import hppfcl as fcl
 import numpy as np
 import pinocchio as pin
@@ -12,7 +11,7 @@ import pinocchio.casadi as cpin
 
 def getObjModel(params):
     """
-    Get Model from sdf
+    Get Model from urdf
     """
     modelpath = params['path']
 
@@ -40,105 +39,87 @@ def getCasFunc(obj, objData, intOpts):
 
     m = intOpts['mass'] * np.eye(nn)
     '''
-    print(inertia.mass)
-    print(inertia.lever)
-    print(inertia.inertia)
-
     # dimensions
     nn = 3
     nu = 3
 
     properties = obj.inertias[1]
     In = properties.inertia
-    # p0 = properties.lever
-    m = properties.mass * np.eye(nn)
-
+    m = properties.mass * ca.DM.eye(nn)
     g = np.array([[0], [0], [-9.8]])
 
-    p1 = np.array([1, 1, 1])
-    P1 = np.array([
-        [0, -p1[2], p1[1]],
-        [p1[2], 0, -p1[0]],
-        [-p1[1], p1[0], 0]
-        ])
+    # Cross Product Matrix format
+    p = ca.SX.sym('p', nn)
+    pX = ca.vertcat(
+            ca.horzcat(0, -p[2], p[1]),
+            ca.horzcat(p[2], 0, -p[0]),
+            ca.horzcat(-p[1], p[0], 0)
+        )
+    xProd = ca.Function('xProduct', [p], [pX], ['inVec'], ['outMat'])
 
-    p2 = np.array([1, -1, 1])
-    P2 = np.array([
-        [0, -p2[2], p2[1]],
-        [p2[2], 0, -p2[0]],
-        [-p2[1], p2[0], 0]
-        ])
+    p1 = ca.SX.sym('p1', nn)
+    p2 = ca.SX.sym('p2', nn)
 
     """
     Declaring the acting inputs, f1, f2 and n1 and n2
     """
-    f1 = casadi.SX.sym("f1", nu)
-    n1 = casadi.SX.sym("n1", nu)
-    f2 = casadi.SX.sym("f2", nu)
-    n2 = casadi.SX.sym("n2", nu)
+    f1 = ca.SX.sym("f1", nu)
+    n1 = ca.SX.sym("n1", nu)
+    f2 = ca.SX.sym("f2", nu)
+    n2 = ca.SX.sym("n2", nu)
 
     """
     State variables, r = (r, rd) and theta = (theta, omega)
     """
-    r = casadi.SX.sym("r", nn)
-    rd = casadi.SX.sym("rd", nn)
-    theta = casadi.SX.sym("theta", nn)
-    omega = casadi.SX.sym("omega", nn)
-
-    omegaX = casadi.vertcat(
-        casadi.horzcat(0, -omega[2], omega[1]),
-        casadi.horzcat(omega[2], 0, -omega[0]),
-        casadi.horzcat(-omega[1], omega[0], 0)
-        )
-
-    
-    """
-    Get the Newton-Euler dynamics ODE
-    """
-    rdd = casadi.inv(m) @ (f1 + f2) + g
-    # rdd = [r, rdd]
-    alpha = casadi.inv(In) @ (n1 + n2 + P1 @ f1 + P2 @ f2 - omegaX @ (In @ omega))
-
-    # thetadd = [theta, thetadd]
-    u = casadi.vertcat(f1, f2, n1, n2)
-    transX = casadi.vertcat(rd, rdd)
-    rotW = casadi.vertcat(omega, alpha)
-    objODE = casadi.vertcat(transX, rotW)
-    rotS = casadi.vertcat(theta, omega)
-    transS = casadi.vertcat(r, rd)
-    x = casadi.vertcat(transS, rotS)
-
-    fObj = casadi.Function('fObj', [x, u], [objODE], ['x', 'u'], ['objAcc'])
-    print(fObj)
+    r = ca.SX.sym("r", nn)
+    dr = ca.SX.sym("dr", nn)
+    theta = ca.SX.sym("theta", nn)
+    omega = ca.SX.sym("omega", nn)
 
     """
-    Integrate the Object dynamics
+    Get the Newton-Euler dynamic equations
     """
-    tf = intOpts['tf']
-    t0 = intOpts['t0']
-    H = intOpts['H']
+    alpha = ca.inv(In) @ (n1 + n2 + xProd(p1) @ f1 + xProd(p2) @ f2 - xProd(omega) @ (In @ omega))
+    theta = cpin.integrate(obj, objData, theta, omega)
+    phi = ca.vertcat(omega, alpha)
+    fRot = ca.Function('phi', [omega, alpha], [omega], ['omega', 'alpha'], ['omega'])
 
-    dae = {'x': x,
-           'p': u,
-           'ode': objODE}
+    """
+    Fixed step Runge-Kutta 4 integrator
+    """
+    omgk = omega
+    M = 4 # RK4 steps per interval
+    DT = tf/M
+    for _ in range(M):
+        k1 = fRot(omgk, n1, n2, f1, f2, p1, p2)
+        k2 = fRot(omgk + DT/2 * k1, n1, n2, f1, f2, p1, p2)
+        k3 = fRot(omgk + DT/2 * k2, n1, n2, f1, f2, p1, p2)
+        k4 = fRot(omgk + DT * k3, n1, n2, f1, f2, p1, p2)
+        omgk = omgk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-    opts = {
-            'simplify': True,
-            'number_of_finite_elements': 4
-            }
+    thetak = cpin.integrate(obj, theta, omgk)
+    phi0 = ca.vertcat(theta, omega)
+    phik = ca.vertcat(thetak, omgk)
+    FkRot = ca.Function('Fk', [phi0, n1, n2, f1, f2, p1, p2], [phik], ['phi0', 'n1', 'n2', 'f1', 'f2', 'p1', 'p2'], ['phik']).expand()
 
-    intg = casadi.integrator('rk4', 'rk', dae, t0, tf, opts)
-    intRes = intg(x0=x, p=u)
-    x_next = intRes['xf']
-    F = casadi.Function('objRint', [x, u], [x_next], ['x', 'u'], ['x_plus'])
-    print(F)
-    bN = F.mapaccum(H)
+    ddr = ca.inv(m) @ ((f1 + f2) + g)
+    x = ca.vertcat(r, dr)
+    dx = ca.vertcat(dr, ddr)
+    fX = ca.Function('X', [x, f1, f2], [dx], ['x', 'f1', 'f2'], ['dx'])
+    xk = x
+    for _ in range(M):
+        k1 = fX(xk, f1, f2)
+        k2 = fX(xk + DT/2 * k1, f1, f2)
+        k3 = fX(xk + DT/2 * k2, f1, f2)
+        k4 = fX(xk + DT * k3, f1, f2)
+        xk = xk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    FkX = ca.Function('Fk', [x, f1, f2], [phik], ['x', 'f1', 'f2'], ['xk']).expand()
 
-    return F, bN
+    return FkRot, FkX
 
 
 def getNLP(F, solOpts):
-    opti = casadi.Opti()
+    opti = ca.Opti()
     H = solOpts['H']
     nx = solOpts['nx']
     nu = solOpts['nu']
@@ -156,8 +137,8 @@ def getNLP(F, solOpts):
 
     obj = 0
     for i in range(H):
-        obj += mtimes([(x[:, i + 1] - xrf).T, Q, x[:, i + 1] - xrf])
-        obj += mtimes([(u[:, i] - urf).T, R, u[:, i] - urf])
+        obj += ca.mtimes([(x[:, i + 1] - xrf).T, Q, x[:, i + 1] - xrf])
+        obj += ca.mtimes([(u[:, i] - urf).T, R, u[:, i] - urf])
 
     opti.minimize(obj)
 
@@ -249,9 +230,11 @@ def main():
         
         plotData = {
                 'x': x,
-                'N': N,
                 'xref': xf,
                 't': t
+                'xlabel': 'time [s]',
+                'ylabel': 'Translation and Rotation of the Object Frame',
+                'title': 'Rigid Body OCP for Forces and Torques Applied'
                 }
 
         plotTraj(plotData)

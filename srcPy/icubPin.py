@@ -1,7 +1,7 @@
 import sys
 import os
 import casadi as ca
-from plotUtils import *
+from utils import *
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
@@ -110,40 +110,6 @@ def forwardModel(model, modOpts):
         H = cpin.SE3ToXYZQUAT(H)
         Hf = ca.Function('Hf', [q], [H], ['q'], ['eH'])
     """
-    return Fk
-
-
-def integrator(F, modOpts):
-
-    """
-    Integrate the dynamics
-    """
-    tf = modOpts['tf']
-    t0 = modOpts['t0']
-
-    method = modOpts['method']
-    x0 = ca.SX.sym('x0', F.size_in(0))
-    u = ca.SX.sym('u', F.size_in(1))
-    xk = x0
-    
-    if method == 'rk4':
-        # Fixed step Runge-Kutta 4 integrator
-        M = 4 # RK4 steps per interval
-        DT = tf/M
-        for j in range(M):
-            k1 = F(xk, u)
-            k2 = F(xk + DT/2 * k1, u)
-            k3 = F(xk + DT/2 * k2, u)
-            k4 = F(xk + DT * k3, u)
-            xk = xk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
-
-        Fk = ca.Function('Fk', [x0, u], [xk],['x0','u'],['xf']).expand()
-
-    elif method == 'euler':
-
-        xk = xk + tf * F(x0, u)
-        Fk = ca.Function('Fk', [x0, u], [xk],['x0','u'],['xf']).expand()
-
     return Fk
 
 
