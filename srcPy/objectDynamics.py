@@ -79,41 +79,33 @@ def getCasFunc(obj, objData, intOpts):
     """
     Get the Newton-Euler dynamic equations
     """
-    alpha = ca.inv(In) @ (n1 + n2 + xProd(p1) @ f1 + xProd(p2) @ f2 - xProd(omega) @ (In @ omega))
-    theta = cpin.integrate(obj, objData, theta, omega)
-    phi = ca.vertcat(omega, alpha)
-    fRot = ca.Function('phi', [omega, alpha], [omega], ['omega', 'alpha'], ['omega'])
+    dt = intOpts['tf']
 
-    """
-    Fixed step Runge-Kutta 4 integrator
-    """
-    omgk = omega
-    M = 4 # RK4 steps per interval
-    DT = tf/M
-    for _ in range(M):
-        k1 = fRot(omgk, n1, n2, f1, f2, p1, p2)
-        k2 = fRot(omgk + DT/2 * k1, n1, n2, f1, f2, p1, p2)
-        k3 = fRot(omgk + DT/2 * k2, n1, n2, f1, f2, p1, p2)
-        k4 = fRot(omgk + DT * k3, n1, n2, f1, f2, p1, p2)
-        omgk = omgk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    # Rotation Dynamics
+    alpha = ca.inv(In) @ (n1 + n2 + ca.cross(p1, f1) + ca.cross(p2, f2) - xProd(omega) @ (In @ omega))
+    dphi = ca.vertcat(omega, alpha)
+    phi = ca.vertcat(theta, omega)
+    u = ca.vertcat(n1, f1, n2, f2)
+    # frot = ca.Function('alpha', [omega, u, p1, p2], [da], ['omega', 'u', 'p1', 'p2'], ['omega'])
 
-    thetak = cpin.integrate(obj, theta, omgk)
-    phi0 = ca.vertcat(theta, omega)
-    phik = ca.vertcat(thetak, omgk)
-    FkRot = ca.Function('Fk', [phi0, n1, n2, f1, f2, p1, p2], [phik], ['phi0', 'n1', 'n2', 'f1', 'f2', 'p1', 'p2'], ['phik']).expand()
-
+    # Translation Dynamics
     ddr = ca.inv(m) @ ((f1 + f2) + g)
-    x = ca.vertcat(r, dr)
     dx = ca.vertcat(dr, ddr)
-    fX = ca.Function('X', [x, f1, f2], [dx], ['x', 'f1', 'f2'], ['dx'])
-    xk = x
-    for _ in range(M):
-        k1 = fX(xk, f1, f2)
-        k2 = fX(xk + DT/2 * k1, f1, f2)
-        k3 = fX(xk + DT/2 * k2, f1, f2)
-        k4 = fX(xk + DT * k3, f1, f2)
-        xk = xk + DT/6 * (k1 + 2 * k2 + 2 * k3 + k4)
-    FkX = ca.Function('Fk', [x, f1, f2], [phik], ['x', 'f1', 'f2'], ['xk']).expand()
+    x = ca.vertcat(r, dr)
+    # fpos = ca.Function('ddr', [x, u], [dx], ['x', 'u'], ['dx'])
+
+    """
+    Explicit Euler integration
+    """
+
+    omegak = omega + alpha * dt
+    thetak = cpin.integrate(obj, theta, omegak * dt)
+    phik = ca.vertcat(thetak, omegak)
+
+    xk = x + ddr * dt
+    miuk = ca.vertcat(xk, phik)
+    miu0 = ca.vertcat(x, phi)
+    Fk = ca.Function('dyn', [miu0, u, p1, p2], [miuk], ['miu0', 'u', 'p1', 'p2'], ['miu1'])
 
     return FkRot, FkX
 
