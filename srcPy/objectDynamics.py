@@ -3,53 +3,122 @@ import os
 
 import casadi as ca
 from utils import *
-import hppfcl as fcl
+from pathlib import Path
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
 
 
-def getObjModel(params):
+def getBoxModel(path):
     """
     Get Model from urdf
     """
-    modelpath = params['path']
-
-    model = pin.buildModelFromUrdf(modelpath, pin.JointModelFreeFlyer())
+    # model = pin.buildModelFromUrdf(path, pin.JointModelFreeFlyer())
+    model_path = Path(os.environ.get("pinRobotDir"))
+    urdf_filename = model_path / "hector_description/robots/quadrotor_base.urdf"
+    model = pin.buildModelFromUrdf(urdf_filename, pin.JointModelFreeFlyer())
 
     data = model.createData()
-    '''
-    print(list(model.names))
-    universe
-    root_joint
-    '''
+
+    # model = pin.Model()
+    # # Default gravity is already (0, 0, -9.81, 0, 0, 0); shown here for clarity.
+
+    # box_size = 1.0  # edge length of each cube [m]
+    # box_half = box_size / 2.0
+    # box_mass = 1.0  # mass of each cube [kg]
+
+    # box_inertia = pin.Inertia.FromBox(box_mass, box_size, box_size, box_size)
+
+    # # Cube 1 - free-flyer joint branching from the universe (joint 0)
+    # joint_id = model.addJoint(
+    #     0, pin.JointModelFreeFlyer(), pin.SE3.Identity(), "box"
+    # )
+    # model.appendBodyToJoint(joint_id, box_inertia, pin.SE3.Identity())
+    # box_frame = pin.Frame("box_frame", joint_id, 0, pin.SE3.Identity(), pin.FrameType.BODY)
+    # model.addFrame(box_frame)
+
+    # data = model.createData()
+    # print(list(model.names))
 
     return model, data
 
+def actuation_model():
+    u1 = ca.SX.sym("u1", 6)
+    u2 = ca.SX.sym("u2", 6)
+    tau = u1 + u2
+
+    return ca.Function("act_model", [u1, u2], [tau], ["f1/n1", "f2/n2"], ["tau"])
+
+
+def state_integrate(model):
+    q = ca.SX.sym("dq", model.nq)
+    dq = ca.SX.sym("q", model.nv)
+    v = ca.SX.sym("v", model.nv)
+    dv = ca.SX.sym("dv", model.nv)
+
+    q_next = cpin.integrate(model, q, dq)
+    v_next = v + dv
+
+    dx = ca.vertcat(dq, dv)
+    x = ca.vertcat(q, v)
+    x_next = ca.vertcat(q_next, v_next)
+
+    return ca.Function("integrate", [x, dx], [x_next], ["x", "dx"], ["x_next"])
+
+
+def state_difference(model):
+    q0 = ca.SX.sym("q0", model.nq)
+    q1 = ca.SX.sym("q1", model.nq)
+    v0 = ca.SX.sym("v0", model.nv)
+    v1 = ca.SX.sym("v1", model.nv)
+
+    q_diff = cpin.difference(model, q0, q1)
+    v_diff = v1 - v0
+
+    x0 = ca.vertcat(q0, v0)
+    x1 = ca.vertcat(q1, v1)
+    x_diff = ca.vertcat(q_diff, v_diff)
+
+    return ca.Function("difference", [x0, x1], [x_diff], ["x0", "x1"], ["x_diff"])
+
+
+def euler_integration(model, data, dt):
+    nu = 6
+    u1 = ca.SX.sym('u1', nu)
+    u2 = ca.SX.sym('u2', nu)
+
+    # tau = actuation_model()(u1, u2)
+    tau = ca.SX.sym('u', model.nv)
+
+    q = ca.SX.sym("q", model.nq)
+    v = ca.SX.sym("v", model.nv)
+
+    a = cpin.aba(model, data, q, v, tau)
+
+    dq = v * dt + a * dt**2
+    dv = a * dt
+
+    x = ca.vertcat(q, v)
+    dx = ca.vertcat(dq, dv)
+    x_next = state_integrate(model)(x, dx)
+
+    return ca.Function("int_dyn", [x, u], [x_next], ["x", "u"], ["x_next"])
+
 
 def getCasFunc(obj, objData, intOpts):
-    '''
-    Hard coded mass and Inertia >>>
-    InMat = intOpts['InertiaMat']
-    In = np.array([
-        [InMat[0], 0, 0],
-        [0, InMat[1], 0],
-        [0, 0, InMat[2]]
-        ])
-
-    m = intOpts['mass'] * np.eye(nn)
-    '''
     # dimensions
-    nn = 3
+    cobj = cpin.Model(obj)
+    nq = cobj.nq
+    nv = cobj.nv
     nu = 3
 
     properties = obj.inertias[1]
     In = properties.inertia
-    m = properties.mass * ca.DM.eye(nn)
+    m = properties.mass * ca.DM.eye(nu)
     g = np.array([[0], [0], [-9.8]])
 
     # Cross Product Matrix format
-    p = ca.SX.sym('p', nn)
+    p = ca.SX.sym('p', nu)
     pX = ca.vertcat(
             ca.horzcat(0, -p[2], p[1]),
             ca.horzcat(p[2], 0, -p[0]),
@@ -57,8 +126,8 @@ def getCasFunc(obj, objData, intOpts):
         )
     xProd = ca.Function('xProduct', [p], [pX], ['inVec'], ['outMat'])
 
-    p1 = ca.SX.sym('p1', nn)
-    p2 = ca.SX.sym('p2', nn)
+    p1 = ca.SX.sym('p1', nu)
+    p2 = ca.SX.sym('p2', nu)
 
     """
     Declaring the acting inputs, f1, f2 and n1 and n2
@@ -71,10 +140,10 @@ def getCasFunc(obj, objData, intOpts):
     """
     State variables, r = (r, rd) and theta = (theta, omega)
     """
-    r = ca.SX.sym("r", nn)
-    dr = ca.SX.sym("dr", nn)
-    theta = ca.SX.sym("theta", nn)
-    omega = ca.SX.sym("omega", nn)
+    r = ca.SX.sym("r", nu)
+    dr = ca.SX.sym("dr", nu)
+    theta = ca.SX.sym("theta", nq)
+    omega = ca.SX.sym("omega", nu)
 
     """
     Get the Newton-Euler dynamic equations
@@ -99,7 +168,7 @@ def getCasFunc(obj, objData, intOpts):
     """
 
     omegak = omega + alpha * dt
-    thetak = cpin.integrate(obj, theta, omegak * dt)
+    thetak = cpin.integrate(theta, omegak * dt)
     phik = ca.vertcat(thetak, omegak)
 
     xk = x + ddr * dt
@@ -110,98 +179,95 @@ def getCasFunc(obj, objData, intOpts):
     return FkRot, FkX
 
 
-def getNLP(F, solOpts):
+def dynSolver(F, model, solOpts):
     opti = ca.Opti()
-    H = solOpts['H']
-    nx = solOpts['nx']
-    nu = solOpts['nu']
-    r = solOpts['r']
-    q = solOpts['q']
+    r = solOpts['r'] # input cost
+    q = solOpts['q'] # state cost
+    H = solOpts['H'] # horizon length
 
-    R = r * np.eye(nu)
-    Q = q * np.eye(nx)
+    nq = F.size_in(0)[0]
+    nu = F.size_in(1)[0]
 
-    x = opti.variable(nx, H + 1)
-    u = opti.variable(nu, H)
-    x0 = opti.parameter(nx, )
-    xrf = opti.parameter(nx, )
+    R = r * ca.DM.eye(nu)
+    Q = q * ca.DM.eye(nq)
+
+    x0 = opti.parameter(nq, )
+    xrf = opti.parameter(nq, )
     urf = opti.parameter(nu, )
 
+    X = []
+    U = []
+    for k in range(H):
+        X.append(opti.variable(nq))
+        U.append(opti.variable(nu))
+    X.append(opti.variable(nq))
+
+    # Cost function
     obj = 0
     for i in range(H):
-        obj += ca.mtimes([(x[:, i + 1] - xrf).T, Q, x[:, i + 1] - xrf])
-        obj += ca.mtimes([(u[:, i] - urf).T, R, u[:, i] - urf])
+        obj += ca.mtimes([(X[i + 1] - xrf).T, Q, X[i + 1] - xrf])
+        obj += ca.mtimes([(U[i] - urf).T, R, U[i] - urf])
 
     opti.minimize(obj)
 
+    # Subject to the model/ discrete function
+    opti.subject_to(state_difference(model)(X[0], x0) == [0] * nx)
     for k in range(H):
-      opti.subject_to(x[:, k + 1]==F(x[:, k], u[:, k]))
+        opti.subject_to(X[k + 1] == F(X[k], U[k]))
 
-    opti.subject_to(x[:, 0]==x0)
-
-    opti
     opts = {
             'print_time': 0,
-            'ipopt.print_level': 0
+            'expand': True,
+            'jit': True,
+            'structure_detection': 'auto',
+            'fatrop.print_level': 0
+            # 'jit_options': {'flags': '-O3', 'verbose': True},
+            # 'fatrop.tolerance': 1e-3,
+            # 'fatrop.max_iter': 200
+            # 'ipopt.hessian_approximation': 'limited-memory',
+            # 'ipopt.print_level': 0,
+            # 'ipopt.tol': 1e-3
             }
 
-# solver options
-    opti.solver('ipopt', opts)
+    opti.solver('fatrop', opts)
 
-    M = opti.to_function('NMPC', [x0, xrf, urf], [u[:, 0]])
+    M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
 
     return M
 
 
 def main():
     objPath = os.getcwd() + '/../conf/testBox.urdf'
-    # model = pin.buildModelFromUrdf(model_path)
-    H = 20
-    nx = 12
-    nu = 12
-    nn = 3
-    pinOpts = {
-            "path": objPath
-            }
+    model, data = getBoxModel(objPath)
 
-    model, data = getObjModel(pinOpts)
-    intOpts = {
-            'mass': 2,
-            'InertiaMat': [.533, .533, .533],
-            't0': 0,
-            'tf': 0.1,
-            'H': H
-            }
-
-    F, xNext = getCasFunc(model, data, intOpts)
-    sys.exit(1)
-    solOpts = {
-            'H': H,
-            'r': 1,
-            'q': 3,
-            'nx': nx,
-            'nu': nu
-            }
-
-    M = getNLP(F, solOpts)
+    dt = 0.1
+    n = 3
+    F = euler_integration(model, data, dt)
+    M = dynSolver(F, model, {
+        'H': 20,
+        'r': 1,
+        'q': 3
+        })
 
     """
     Control Loop
     """
     # initial state
-    r0 = np.zeros([nn, ])
-    v0 = np.zeros([nn, ])
-    th0 = np.zeros([nn, ])
-    w0 = np.zeros([nn, ])
+    Hi = pin.SE3.Random()
+    r0 = Hi.translation
+    v0 = np.zeros([n, ])
+    th0 = pin.Quaternion(Hi.rotation)
+    w0 = np.zeros([n, ])
     x0 = np.concatenate((r0, v0, th0, w0), axis=0)
 
     # reference state
-    rf = np.ones([nn, ])
+    Hf = pin.SE3.Random()
+    rf = Hf.translation
     vf = v0
-    thf = np.pi/3 * np.ones([nn, ])
+    thf = pin.Quaternion(Hf.rotation)
     wf = w0
     xf = np.concatenate((rf, vf, thf, wf), axis=0)
-    uf = np.zeros([nu, ])
+    uf = np.zeros([n, ])
 
     T = 15
     Ts = intOpts['tf']
@@ -223,7 +289,7 @@ def main():
         plotData = {
                 'x': x,
                 'xref': xf,
-                't': t
+                't': t,
                 'xlabel': 'time [s]',
                 'ylabel': 'Translation and Rotation of the Object Frame',
                 'title': 'Rigid Body OCP for Forces and Torques Applied'
