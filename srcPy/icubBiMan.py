@@ -33,7 +33,10 @@ def inverseModel(model, modOpts):
     tau = cpin.rnea(cmodel, cdata, q, v, a)
     hk = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau']).expand()
 
-    return Fk, hk
+    # Both Functions Stacked
+    FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
+
+    return Fk, hk, FhStack
 
 
 def getArmModel(params):
@@ -92,13 +95,13 @@ def forwardModel(model, modOpts):
     x = ca.vertcat(q, v)
     u = tau
     dx = ca.vertcat(v, qdd)
-    fJ = ca.Function('jac_xd_f', [x, u, xd], [abaJac])
+    fJ = ca.Function('jac_dx_f', [x, u, xd], [abaJac])
 
     # qdd_f = ca.Function('qdd_f', [q, v, tau], [qdd], ['q', 'v', 'tau'], ['qdd'])
-    xd_f = ca.Function('xd_f', [x, u], [dx], ['x', 'u'], ['dx'],
+    dx_f = ca.Function('dx_f', [x, u], [dx], ['x', 'u'], ['dx'],
                             {"custom_jacobian": fJ, "jac_penalty": 0}).expand()
 
-    Fk = integrator(xd_f, modOpts)
+    Fk = integrator(dx_f, modOpts)
 
     """
         COST FUNCTION FOR FORWARD KINEMATICS
@@ -113,7 +116,7 @@ def forwardModel(model, modOpts):
     return Fk
 
 
-def rneaOCP(F, h, solOpts):
+def rneaOCP(F, h, hstack, solOpts):
     opti = ca.Opti()
     r = solOpts['r']
     q = solOpts['q']
@@ -141,11 +144,14 @@ def rneaOCP(F, h, solOpts):
         A.append(opti.variable(na))
     X.append(opti.variable(nx))
     A.append(opti.variable(na))
+    
+    # testX = ca.hcat(X[:-1])
+    # testA = ca.hcat(A[:-1])
+    # allDyn, allU = hstack.map(H, 'openmp')(testX, testA)
 
     # Cost function
     obj = 0
     for i in range(H):
-        # obj += ca.mtimes([(X[i + 1] - xrf).T, Qx, X[i + 1] - xrf])
         obj += ca.mtimes([(X[i + 1] - xrf).T, Qx, X[i + 1] - xrf])
         obj += ca.mtimes([(A[i]).T, Qa, A[i]])
         obj += ca.mtimes([(U[i] - urf).T, R, U[i] - urf])
@@ -157,14 +163,16 @@ def rneaOCP(F, h, solOpts):
     for k in range(H):
         opti.subject_to(X[k+1] == F(X[k], A[k]))
         opti.subject_to(U[k] == h(X[k], A[k]))
+        # opti.subject_to(X[k+1] == allDyn[k])
+        # opti.subject_to(U[k] == allU[k])
 
     opts = {
-            'print_time': 0,
+            'print_time': 1,
             'expand': True,
-            # 'debug': True,
+            'debug': True,
             # 'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
-            'fatrop.print_level': 0,
+            # 'fatrop.print_level': 0,
             # 'fatrop.tolerance': 1e-3,
             # 'fatrop.max_iter': 200
             'structure_detection': 'auto'
@@ -257,7 +265,7 @@ def main():
             }
     model, data = getArmModel(pinOpts)
     Fsim = forwardModel(model, modOpts)
-    F, h = inverseModel(model, modOpts)
+    F, h, hstack = inverseModel(model, modOpts)
 
     solOpts = {
             'H': 15,
@@ -265,8 +273,8 @@ def main():
             'q': 7
             }
 
-    # M = rneaOCP(F, h, solOpts)
-    M = abaOCP(Fsim, solOpts)
+    M = rneaOCP(F, h, hstack, solOpts)
+    # M = abaOCP(Fsim, solOpts)
 
     """
     Control Loop
@@ -283,30 +291,33 @@ def main():
     uref = pin.rnea(model, data, qref, v0, v0)
     xref = np.concatenate((qref, v0), axis=0)
 
-    T = 5
+    T = 8
     Ts = modOpts['tf']
     N = int(T/Ts)
     t = np.linspace(0, T, N+1)
     x = [None] * (N + 1)
     q = [None] * (N + 1)
-    p = [None] * (N)
+    frames = []
+    p = np.zeros((3, N + 1))
     u = [None] * N
+
     x[0] = x0
+    q[0] = x[0][0:nq]
+    p[:, 0] = data.oMi[6].translation.copy()
+    frames.append(data.oMi[6].copy())
 
     for i in range(N):
         u[i] = np.squeeze(M(x[i], xref, uref))
         x[i + 1] = np.squeeze(Fsim(x[i], u[i]))
 
         # Exctracting the trajectory
-        q[i] = x[i][:nq]
-        pin.forwardKinematics(model, data, q[i])
+        q[i + 1] = x[i + 1][:nq]
+        pin.forwardKinematics(model, data, q[i + 1])
         pin.updateFramePlacements(model, data)
-        p[i] = data.oMi[6].translation
+        p[:, i + 1] = data.oMi[6].translation.copy()
 
-    # Extracting last position
-    q[-1] = x[-1][:nq]
-    
     # Extracting velocities
+    frames.append(data.oMi[6].copy())
     v = [None] * (N + 1)
     v = [xi[-nv:] for xi in x]
 
@@ -351,7 +362,8 @@ def main():
         plot3D({
             'x':p,
             'xlabel': 'End-Effector Trajectory',
-            'title': 'iCub Arm Control'
+            'title': 'iCub Arm Control',
+            'frames': frames
             })
 
     except ImportError as err:

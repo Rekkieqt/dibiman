@@ -83,6 +83,7 @@ def plot3D(data):
     title = data['title']
     xl = data['xlabel']
     x = data['x']
+    frames = data['frames']
 
     X = np.array(x)
     x = X[0, :]
@@ -116,6 +117,10 @@ def plot3D(data):
     ax.legend()
     ax.grid(True)
     ax.view_init(elev=30, azim=135)
+
+    # Plot Frames
+    plotCoordinateFrame(ax, frames[0], size=0.05)
+    plotCoordinateFrame(ax, frames[-1], size=0.05)
 
     plt.tight_layout()
     plt.show()
@@ -153,12 +158,12 @@ def plotCoordinateFrame(axis, T_0f, size=1, linewidth=3, name=None):
     #if type(axis) != axes.Axes3D:
     #    raise TypeError("axis argument is the wrong type. Expected matplotlib.axes.Axes3D, got %s" % (type(axis)))
 
-    p_f = numpy.array([ [ 0,0,0,1], [size,0,0,1], [0,size,0,1], [0,0,size,1]]).T;
-    p_0 = numpy.dot(T_0f,p_f)
+    p_f = np.array([ [ 0,0,0,1], [size,0,0,1], [0,size,0,1], [0,0,size,1]]).T;
+    p_0 = np.dot(T_0f,p_f)
 
-    X = numpy.append([p_0[:,0].T], [p_0[:,1].T], axis=0 )
-    Y = numpy.append([p_0[:,0].T], [p_0[:,2].T], axis=0 )
-    Z = numpy.append([p_0[:,0].T], [p_0[:,3].T], axis=0 )
+    X = np.append([p_0[:,0].T], [p_0[:,1].T], axis=0 )
+    Y = np.append([p_0[:,0].T], [p_0[:,2].T], axis=0 )
+    Z = np.append([p_0[:,0].T], [p_0[:,3].T], axis=0 )
     axis.plot3D(X[:,0],X[:,1],X[:,2], 'r-', linewidth=linewidth)
     axis.plot3D(Y[:,0],Y[:,1],Y[:,2], 'g-', linewidth=linewidth)
     axis.plot3D(Z[:,0],Z[:,1],Z[:,2], 'b-', linewidth=linewidth)
