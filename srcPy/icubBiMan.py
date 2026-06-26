@@ -34,9 +34,9 @@ def inverseModel(model, modOpts):
     hk = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau']).expand()
 
     # Both Functions Stacked
-    FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
+    # FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
 
-    return Fk, hk, FhStack
+    return Fk, hk
 
 
 def getArmModel(params):
@@ -103,20 +103,10 @@ def forwardModel(model, modOpts):
 
     Fk = integrator(dx_f, modOpts)
 
-    """
-        COST FUNCTION FOR FORWARD KINEMATICS
-        # FK q -> XYZ , Quaternion
-        cpin.forwardKinematics(cmodel, cdata, q)
-        cpin.updateFramePlacements(cmodel, cdata)
-
-        H = cdata.oMf[6]
-        H = cpin.SE3ToXYZQUAT(H)
-        Hf = ca.Function('Hf', [q], [H], ['q'], ['eH'])
-    """
     return Fk
 
 
-def rneaOCP(F, h, hstack, solOpts):
+def rneaOCP(F, h, solOpts):
     opti = ca.Opti()
     r = solOpts['r']
     q = solOpts['q']
@@ -169,8 +159,8 @@ def rneaOCP(F, h, hstack, solOpts):
     opts = {
             'print_time': 1,
             'expand': True,
-            'debug': True,
-            # 'jit': True,
+            # 'debug': True,
+            'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
             # 'fatrop.print_level': 0,
             # 'fatrop.tolerance': 1e-3,
@@ -186,7 +176,13 @@ def rneaOCP(F, h, hstack, solOpts):
     M = opti.to_function('NMPC', [x0, xrf, urf], [U[0]])
     # M = M.map(2, 'openmp')
 
-    return M
+    return opti, M
+
+def set_initial(opti, Xinit, Ainit, Uinit) -> None:
+    for k in len(X):
+        opti.set_initial(X[k + 1], Xinit[k + 1])
+        opti.set_initial(U[k], Uinit[k])
+        opti.set_initial(A[k], Ainit[k])
 
 
 def abaOCP(F, solOpts):
@@ -226,7 +222,7 @@ def abaOCP(F, solOpts):
         opti.subject_to(X[k + 1] == F(X[k], U[k]))
 
     opts = {
-            'print_time': 0,
+            'print_time': 1,
             'expand': True,
             'jit': True,
             'structure_detection': 'auto',
@@ -265,7 +261,7 @@ def main():
             }
     model, data = getArmModel(pinOpts)
     Fsim = forwardModel(model, modOpts)
-    F, h, hstack = inverseModel(model, modOpts)
+    F, h = inverseModel(model, modOpts)
 
     solOpts = {
             'H': 15,
@@ -273,7 +269,7 @@ def main():
             'q': 7
             }
 
-    M = rneaOCP(F, h, hstack, solOpts)
+    opti, M = rneaOCP(F, h, solOpts)
     # M = abaOCP(Fsim, solOpts)
 
     """
@@ -307,7 +303,15 @@ def main():
     frames.append(data.oMi[6].copy())
 
     for i in range(N):
-        u[i] = np.squeeze(M(x[i], xref, uref))
+        # Plant simulation Control and warmstart
+        opti.set_value(x0, x0)
+        opti.set_value(xrf, xref)
+        opti.set_value(urf, uref)
+        sol = opti.solve()
+        Xinit, Uinit, Ainit = sol.value(X), sol.value(U), sol.value(A)
+        u[i] = Uinit[0]
+        set_initial(opti, Xinit, Ainit, Uinit)
+        # u[i] = np.squeeze(M(x[i], xref, uref))
         x[i + 1] = np.squeeze(Fsim(x[i], u[i]))
 
         # Exctracting the trajectory
