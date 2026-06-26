@@ -9,7 +9,7 @@ import pinocchio.casadi as cpin
 
 class NMPC:
     def __init__(self, armParameters, method, Ts, ocpParameters):
-        self.method = method
+        # Loading the model of the arm from full body URDF
         self.model, self.data = self.getArmModel(armParameters) 
         self.cmodel = cpin.Model(self.model)
         self.cdata = self.cmodel.createData()
@@ -20,16 +20,15 @@ class NMPC:
         self.nu = self.na
         self.nx = self.nq + self.nv
 
+        # Model Dynamics
         self.dt = Ts
         self.H = ocpParameters['H']
-        if method == 'inverse':
-            self.inverseModel()
-        elif method == 'forward':
-            self.forwardModel()
+        self.forwardModel()
+        self.inverseModel()
 
+        # Solver Initialization
         self.optimizer = ca.Opti()
         self.solverVariablesInit()
-
         self.solverOptions = {
                 'print_time': 1,
                 'expand': True,
@@ -44,7 +43,10 @@ class NMPC:
                 # 'ipopt.print_level': 0,
                 # 'ipopt.tol': 1e-3
                 }
-
+        if method == 'inverse':
+            self.rneaSolver()
+        elif method == 'forward':
+            self.abaSolver()
 
     def getArmModel(self, params):
         """
@@ -87,12 +89,11 @@ class NMPC:
         qk = q + self.dt * v
         vk = v + self.dt * a
         xk = ca.vertcat(qk, vk)
-        self.Fk = ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
+        self.Fk_Inverse = ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
 
         # RNEA Function
         tau = cpin.rnea(self.cmodel, self.cdata, q, v, a)
-        self.hk = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau']).expand()
-
+        self.hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau']).expand()
         # Both Functions Stacked
         # FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
 
@@ -166,8 +167,8 @@ class NMPC:
         # Subject to the model/ descrete function
         self.optimizer.subject_to(self.X[0] == self.x0)
         for k in range(H):
-            self.optimizer.subject_to(self.X[k+1] == self.Fk(self.X[k], self.A[k]))
-            self.optimizer.subject_to(self.U[k] == self.hk(self.X[k], self.A[k]))
+            self.optimizer.subject_to(self.X[k+1] == self.Fk_Inverse(self.X[k], self.A[k]))
+            self.optimizer.subject_to(self.U[k] == self.hk_rnea(self.X[k], self.A[k]))
             # opti.subject_to(X[k+1] == allDyn[k])
             # opti.subject_to(U[k] == allU[k])
 
@@ -218,8 +219,9 @@ class NMPC:
     def set_initial(self) -> None:
         for k in range(self.H):
             self.optimizer.set_initial(self.X[k + 1], self.Xinit[k + 1])
-            self.optimizer.set_initial(self.A[k], self.Ainit[k])
             self.optimizer.set_initial(self.U[k], self.Uinit[k])
+            if method == 'inverse':
+                self.optimizer.set_initial(self.A[k], self.Ainit[k])
 
     def solve(self, x0, xRef, uRef):
         self.optimizer.set_value(self.x0, x0)
@@ -234,5 +236,7 @@ class NMPC:
         self.Uinit = solution.value(self.U) 
         self.Ainit = solution.value(self.A) 
         self.Xinit = solution.value(self.X) 
-
         return self.Uinit[0]
+
+    def PlantModel(self):
+        return self.Fk_Forward
