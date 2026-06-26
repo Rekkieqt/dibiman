@@ -98,13 +98,13 @@ class NMPC:
         # FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
 
     def forwardModel(self) -> None:
-        tau = ca.SX.sym("tau", self.nu)
+        u = ca.SX.sym("tau", self.nu)
         q = ca.SX.sym("q", self.nq)
         v = ca.SX.sym("v", self.nv)
 
         # ABA
-        ddq = cpin.aba(self.cmodel, self.cdata, q, v, tau)  # ODE format of the manipulator dynamics
-        cpin.computeABADerivatives(self.cmodel, self.cdata, q, v, tau)
+        ddq = cpin.aba(self.cmodel, self.cdata, q, v, u)  # ODE format of the manipulator dynamics
+        cpin.computeABADerivatives(self.cmodel, self.cdata, q, v, u)
 
         # ABA Derivatives
         ddq_dq = self.cdata.ddq_dq
@@ -121,7 +121,6 @@ class NMPC:
 
         # Define f(x) model
         x = ca.vertcat(q, v)
-        u = tau
         dx = ca.vertcat(v, ddq)
         fJ = ca.Function('jac_dx_f', [x, u, dx], [abaJac])
 
@@ -224,6 +223,7 @@ class NMPC:
                 self.optimizer.set_initial(self.A[k], self.Ainit[k])
 
     def solve(self, x0, xRef, uRef):
+        # Initialize parameters
         self.optimizer.set_value(self.x0, x0)
         self.optimizer.set_value(self.xrf, xRef)
         self.optimizer.set_value(self.urf, uRef)
@@ -240,3 +240,6 @@ class NMPC:
 
     def PlantModel(self):
         return self.Fk_Forward
+
+    def pinModelandData(self):
+        return self.model, self.model
