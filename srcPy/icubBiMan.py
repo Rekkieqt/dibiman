@@ -13,7 +13,7 @@ def main():
     """ Option structs """
     dt = 0.05
     ocpParams = {
-            'H': 15,
+            'H': 50,
             'r': 1,
             'q': 7
             }
@@ -58,8 +58,7 @@ def main():
 
     for i in range(N):
         # Plant simulation Control and warmstart
-        u[i] = icubCtrler.solve(x0, xref, uref)
-
+        u[i] = icubCtrler.solve(x[i], xref, uref)
         # u[i] = np.squeeze(M(x[i], xref, uref))
         x[i + 1] = np.squeeze(icubCtrler.plantModel()(x[i], u[i]))
 
@@ -75,12 +74,12 @@ def main():
     v = [xi[-nv:] for xi in x]
 
     # Printing last result and references
-    print('States, last measured vs ref')
-    print(x[-1])
-    print(xref)
-    print('Torques, last measured vs ref')
-    print(u[-1])
-    print(uref)
+    # print('States, last measured vs ref')
+    # print(x[-1])
+    # print(xref)
+    # print('Torques, last measured vs ref')
+    # print(u[-1])
+    # print(uref)
 
     # --------------PLOTS-----------
     try:

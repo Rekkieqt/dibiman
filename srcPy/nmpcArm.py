@@ -13,6 +13,7 @@ class NMPC:
         self.model, self.data = self.getArmModel(armParameters) 
         self.cmodel = cpin.Model(self.model)
         self.cdata = self.cmodel.createData()
+        self.method = method
 
         self.nq = self.cmodel.nq
         self.nv = self.cmodel.nv
@@ -34,8 +35,8 @@ class NMPC:
                 'expand': True,
                 # 'debug': True,
                 'jit': True,
-                # 'jit_options': {'flags': '-O3', 'verbose': True},
-                # 'fatrop.print_level': 0,
+                'jit_options': {'flags': '-O2', 'verbose': False},
+                'fatrop.print_level': 0,
                 # 'fatrop.tolerance': 1e-3,
                 # 'fatrop.max_iter': 200
                 'structure_detection': 'auto'
@@ -44,9 +45,9 @@ class NMPC:
                 # 'ipopt.tol': 1e-3
                 }
         if method == 'inverse':
-            self.rneaSolver()
+            self.rneaSolver(ocpParameters)
         elif method == 'forward':
-            self.abaSolver()
+            self.abaSolver(ocpParameters)
 
     def getArmModel(self, params):
         """
@@ -117,16 +118,16 @@ class NMPC:
         df_dx = ca.horzcat(df_dq, df_dv)
 
         df_du = ca.vertcat(np.zeros((self.nv, self.nv)), ddq_dtau)
-        abaJac = ca.horzcat(df_dx, df_du)
+        abaJacobian = ca.horzcat(df_dx, df_du)
 
         # Define f(x) model
         x = ca.vertcat(q, v)
         dx = ca.vertcat(v, ddq)
-        fJ = ca.Function('jac_dx_f', [x, u, dx], [abaJac])
+        fJ = ca.Function('jac_dx_f', [x, u], [abaJacobian])
 
         # qdd_f = ca.Function('qdd_f', [q, v, tau], [qdd], ['q', 'v', 'tau'], ['qdd'])
         dx_f = ca.Function('dx_f', [x, u], [dx], ['x', 'u'], ['dx'],
-                                {"custom_jacobian": fJ, "jac_penalty": 0})
+                           {"custom_jacobian": fJ, "jac_penalty": 0})
         xk = x
         xk = xk + self.dt * dx_f(x, u)
         self.Fk_Forward = ca.Function('Fk', [x, u], [xk], ['x0', 'u'], ['xf']).expand()
@@ -219,7 +220,7 @@ class NMPC:
         for k in range(self.H):
             self.optimizer.set_initial(self.X[k + 1], self.Xinit[k + 1])
             self.optimizer.set_initial(self.U[k], self.Uinit[k])
-            if method == 'inverse':
+            if self.method == 'inverse':
                 self.optimizer.set_initial(self.A[k], self.Ainit[k])
 
     def solve(self, x0, xRef, uRef):
@@ -233,13 +234,18 @@ class NMPC:
 
         # Solve
         solution = self.optimizer.solve()
-        self.Uinit = solution.value(self.U) 
-        self.Ainit = solution.value(self.A) 
-        self.Xinit = solution.value(self.X) 
+        self.updateSolution(solution)
         return self.Uinit[0]
 
-    def PlantModel(self):
+    def plantModel(self):
         return self.Fk_Forward
 
     def pinModelandData(self):
-        return self.model, self.model
+        return self.model, self.data
+
+    def updateSolution(self, solution) -> None:
+        for k in range(self.H):
+            self.Xinit[k + 1] = np.squeeze(solution.value(self.X[k]))
+            self.Uinit[k] = np.squeeze(solution.value(self.U[k]))
+            if self.method == 'inverse':
+                self.Ainit[k] = np.squeeze(solution.value(self.A[k]))
