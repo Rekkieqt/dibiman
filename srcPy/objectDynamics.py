@@ -112,6 +112,7 @@ def dynSolver(F, model, data, solOpts):
 
     x0 = opti.parameter(nxF, )
     xrf = opti.parameter(nxF, )
+    xnom = opti.parameter(nxF, )
     # p = opti.parameter(np, )
 
     X = []
@@ -124,24 +125,24 @@ def dynSolver(F, model, data, solOpts):
     # Objective function
     obj = 0
 
+    # Initial state
+    x_0 = state_integrate(model)(xnom, X[0])
+    opti.subject_to(state_difference(model)(x0, x_0) == [0] * nx)
+
     # State & Control regularization
     for k in range(H):
-        x_i = state_integrate(model)(xrf, X[k])
-        e_reg = state_difference(model)(xrf, x_i)
+        x_i = state_integrate(model)(xnom, X[k])
+        e_reg = state_difference(model)(xnom, x_i)
         obj += ca.mtimes([e_reg.T, Q, e_reg])
         obj += ca.mtimes([U[k].T, R, U[k]])
 
     opti.minimize(obj)
 
-    # Initial state
-    x_0 = state_integrate(model)(xrf, X[0])
-    opti.subject_to(state_difference(model)(x0, x_0) == [0] * nx)
-
     # Dynamical constraints
     for k in range(H):
-        x_i = state_integrate(model)(xrf, X[k])
-        x_i_1 = state_integrate(model)(xrf, X[k + 1])
+        x_i = state_integrate(model)(xnom, X[k])
         f_x_u = euler_integration(model, data)(x_i, U[k])
+        x_i_1 = state_integrate(model)(xnom, X[k + 1])
         gap = state_difference(model)(f_x_u, x_i_1)
         opti.subject_to(gap == [0] * nx)
 
@@ -155,12 +156,12 @@ def dynSolver(F, model, data, solOpts):
 
     # Solver options
     opts = {
-            'print_time': 1,
+            'print_time': 0,
             'expand': True,
             'debug': True,
-            # 'jit': True,
             # 'structure_detection': 'auto',
-            # 'fatrop.print_level': 0
+            'fatrop.print_level': 0
+            # 'jit': True,
             # 'jit_options': {'flags': '-O3', 'verbose': True},
             # 'fatrop.tolerance': 1e-3,
             # 'fatrop.max_iter': 200
@@ -171,7 +172,7 @@ def dynSolver(F, model, data, solOpts):
 
     opti.solver('fatrop', opts)
 
-    M = opti.to_function('NMPC', [x0, xrf], [U[0], ca.hcat(X), ca.hcat(U)])
+    M = opti.to_function('NMPC', [x0, xrf, xnom], [U[0]])
 
     return M
 
@@ -181,7 +182,7 @@ def main():
     model, data, cmodel, cdata = getBoxModel(objPath)
 
     dt = 0.1
-    H = 20
+    H = 2
     nq = cmodel.nq
     nv = cmodel.nv
     F = euler_integration(cmodel, cdata, dt)
@@ -191,9 +192,6 @@ def main():
         'r': 1,
         'q': 3
         })
-
-    Upast = [ca.DM.zeros(nv) for _ in range(H)]
-    Xpast = [ca.DM.zeros(nx) for _ in range(H + 1)]
 
     """
     Control Loop
@@ -210,6 +208,9 @@ def main():
     vf = v0
     xf = np.concatenate((Hfvec, vf), axis=0)
 
+    # xnom
+    xnom = np.array([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+
     T = 8
     Ts = dt
     N = int(T/Ts)
@@ -225,8 +226,7 @@ def main():
     frames.append(np.array(Hi))
 
     for i in range(N):
-        utemp, Xsolved, Usolved = M(x[i], xf)
-        u[i] = np.squeeze(utemp)
+        u[i] = np.squeeze(M(x[i], xf, xnom))
         x[i + 1] = np.squeeze(F(x[i], u[i]))
         p[:, i + 1] = pin.XYZQUATToSE3(x[i + 1][0:nq]).translation
         # Xpast, Upast = Xsolved.copy(), Usolved.copy()
