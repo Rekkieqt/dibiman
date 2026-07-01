@@ -94,7 +94,21 @@ class NMPC:
 
         # RNEA Function
         tau = cpin.rnea(self.cmodel, self.cdata, q, v, a)
-        self.hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau']).expand()
+        cpin.computeRNEADerivatives(self.cmodel, self.cdata, q, v, a)
+
+        # RNEA Derivatives
+        du_dq = self.cdata.dtau_dq
+        du_dv = self.cdata.dtau_dv
+        du_da = self.cdata.M
+
+        rneaJacobian = ca.horzcat(du_dq, du_dv, du_da)
+
+        # Define f(x) model
+        rneaJac = ca.Function('jac_rnea', [x, a], [rneaJacobian])
+
+        self.hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'],
+                                   {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
+
         # Both Functions Stacked
         # FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
 

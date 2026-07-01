@@ -13,22 +13,14 @@ def getBoxModel(path):
     """
     Get Model from urdf
     """
-    # model = pin.buildModelFromUrdf(path, pin.JointModelFreeFlyer())
-    model_path = Path(os.environ.get("pinRobotDir"))
-    urdf_filename = model_path / "hector_description/robots/quadrotor_base.urdf"
-    model = pin.buildModelFromUrdf(urdf_filename, pin.JointModelFreeFlyer())
+    model = pin.buildModelFromUrdf(path, pin.JointModelFreeFlyer())
+    # model_path = Path(os.environ.get("pinRobotDir"))
+    # urdf_filename = model_path / "hector_description/robots/quadrotor_base.urdf"
+    # model = pin.buildModelFromUrdf(urdf_filename, pin.JointModelFreeFlyer())
     data = model.createData()
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
-
     return model, data, cmodel, cdata
-
-
-def set_initial(k, Upast, Xpast):
-    uk = ca.DM(Upast[k])
-    xk = ca.DM(Xpast[k])
-
-    return uk, xk
 
 
 def actuation_model(nu):
@@ -72,7 +64,7 @@ def state_difference(model):
     return ca.Function("difference", [x0, x1], [x_diff], ["x0", "x1"], ["x_diff"])
 
 
-def euler_integration(model, data, dt=0.1):
+def euler_integration(model, data, dt=0.05):
     nu = model.nv
     u1 = ca.SX.sym('u1', nu)
     u2 = ca.SX.sym('u2', nu)
@@ -145,14 +137,6 @@ def dynSolver(F, model, data, solOpts):
         x_i_1 = state_integrate(model)(xnom, X[k + 1])
         gap = state_difference(model)(f_x_u, x_i_1)
         opti.subject_to(gap == [0] * nx)
-
-
-    # # Warm Start
-    # for k in range(H):
-    #     u_init, x_init = np.zeros((nu, )), np.zeros((nx, ))
-    #     opti.set_initial(U[k], u_init)
-    #     opti.set_initial(X[k + 1], x_init)
-
 
     # Solver options
     opts = {
