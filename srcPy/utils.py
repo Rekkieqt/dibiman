@@ -2,11 +2,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import casadi as ca
 from mpl_toolkits.mplot3d import Axes3D
-"""
-TO-DO:
-    - Add 3D Frame Rotation
-"""
-
 
 def integrator(F, modOpts):
     """

@@ -7,7 +7,7 @@ import pinocchio as pin
 import pinocchio.casadi as cpin
 # print(dir(cpin)) -> prints callable functions
 
-class NMPC:
+class armNMPC:
     def __init__(self, armParameters, method, Ts, ocpParameters):
         # Loading the model of the arm from full body URDF
         self.model, self.data = self.getArmModel(armParameters) 
@@ -24,8 +24,8 @@ class NMPC:
         # Model Dynamics
         self.dt = Ts
         self.H = ocpParameters['H']
-        self.forwardModel()
-        self.inverseModel()
+        self.Fk_Forward = self.forwardModel(self.cmodel, self.cdata)
+        self.Fk_Inverse, self.hk_rnea = self.inverseModel(self.cmodel, self.cdata)
 
         # Solver Initialization
         self.optimizer = ca.Opti()
@@ -34,9 +34,9 @@ class NMPC:
                 'print_time': 1,
                 'expand': True,
                 # 'debug': True,
-                'jit': True,
-                'jit_options': {'flags': '-O2', 'verbose': False},
-                'fatrop.print_level': 0,
+                # 'jit': True,
+                # 'jit_options': {'flags': '-O2', 'verbose': False},
+                # 'fatrop.print_level': 0,
                 # 'fatrop.tolerance': 1e-3,
                 # 'fatrop.max_iter': 200
                 'structure_detection': 'auto'
@@ -73,15 +73,15 @@ class NMPC:
 
         return model, data
 
-    def inverseModel(self) -> None:
+    def inverseModel(self, cmodel, cdata):
         """
         Acceleration and Torque as inputs to the system
 
         """
         # Dynamic variables
-        q = ca.SX.sym("q", self.nq)
-        v = ca.SX.sym("v", self.nv)
-        a = ca.SX.sym("a", self.na)
+        q = ca.SX.sym("q", cmodel.nq)
+        v = ca.SX.sym("v", cmodel.nv)
+        a = ca.SX.sym("a", cmodel.nv)
 
         # Simplified dynamics
         x = ca.vertcat(q, v)
@@ -90,48 +90,49 @@ class NMPC:
         qk = q + self.dt * v
         vk = v + self.dt * a
         xk = ca.vertcat(qk, vk)
-        self.Fk_Inverse = ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
+        Fk_Inverse = ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
 
         # RNEA Function
-        tau = cpin.rnea(self.cmodel, self.cdata, q, v, a)
-        cpin.computeRNEADerivatives(self.cmodel, self.cdata, q, v, a)
+        tau = cpin.rnea(cmodel, cdata, q, v, a)
+        cpin.computeRNEADerivatives(cmodel, cdata, q, v, a)
 
         # RNEA Derivatives
-        du_dq = self.cdata.dtau_dq
-        du_dv = self.cdata.dtau_dv
-        du_da = self.cdata.M
+        du_dq = cdata.dtau_dq
+        du_dv = cdata.dtau_dv
+        du_da = cdata.M
 
         rneaJacobian = ca.horzcat(du_dq, du_dv, du_da)
 
         # Define f(x) model
         rneaJac = ca.Function('jac_rnea', [x, a], [rneaJacobian])
 
-        self.hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'],
+        hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'],
                                    {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
 
         # Both Functions Stacked
         # FhStack = ca.Function('hStack', [x, a], [xk, tau]).expand()
+        return Fk_Inverse, hk_rnea
 
-    def forwardModel(self) -> None:
-        u = ca.SX.sym("tau", self.nu)
-        q = ca.SX.sym("q", self.nq)
-        v = ca.SX.sym("v", self.nv)
+    def forwardModel(self, cmodel, cdata):
+        u = ca.SX.sym("tau", cmodel.nv)
+        q = ca.SX.sym("q", cmodel.nq)
+        v = ca.SX.sym("v", cmodel.nv)
 
         # ABA
-        ddq = cpin.aba(self.cmodel, self.cdata, q, v, u)  # ODE format of the manipulator dynamics
-        cpin.computeABADerivatives(self.cmodel, self.cdata, q, v, u)
+        ddq = cpin.aba(cmodel, cdata, q, v, u)  # ODE format of the manipulator dynamics
+        cpin.computeABADerivatives(cmodel, cdata, q, v, u)
 
         # ABA Derivatives
-        ddq_dq = self.cdata.ddq_dq
-        ddq_dv = self.cdata.ddq_dv
-        ddq_dtau = self.cdata.Minv
+        ddq_dq = cdata.ddq_dq
+        ddq_dv = cdata.ddq_dv
+        ddq_dtau = cdata.Minv
 
         # Construct ABA Jacobian
-        df_dq = ca.vertcat(np.zeros((self.nv, self.nv)), ddq_dq)
-        df_dv = ca.vertcat(np.eye(self.nv), ddq_dv)
+        df_dq = ca.vertcat(np.zeros((cmodel.nv, cmodel.nv)), ddq_dq)
+        df_dv = ca.vertcat(np.eye(cmodel.nv), ddq_dv)
         df_dx = ca.horzcat(df_dq, df_dv)
 
-        df_du = ca.vertcat(np.zeros((self.nv, self.nv)), ddq_dtau)
+        df_du = ca.vertcat(np.zeros((cmodel.nv, cmodel.nv)), ddq_dtau)
         abaJacobian = ca.horzcat(df_dx, df_du)
 
         # Define f(x) model
@@ -144,7 +145,7 @@ class NMPC:
                            {"custom_jacobian": fJ, "jac_penalty": 0})
         xk = x
         xk = xk + self.dt * dx_f(x, u)
-        self.Fk_Forward = ca.Function('Fk', [x, u], [xk], ['x0', 'u'], ['xf']).expand()
+        return ca.Function('Fk', [x, u], [xk], ['x0', 'u'], ['xf']).expand()
         # self.Fk = integrator(dx_f, modOpts)
 
     def rneaSolver(self, params) -> None:
@@ -160,10 +161,6 @@ class NMPC:
         self.X.append(self.optimizer.variable(self.nx))
         self.A.append(self.optimizer.variable(self.na))
         
-        # testX = ca.hcat(X[:-1])
-        # testA = ca.hcat(A[:-1])
-        # allDyn, allU = hstack.map(H, 'openmp')(testX, testA)
-
         # Cost function
         R = r * ca.DM.eye(self.nu)
         Qx = q * ca.DM.eye(self.nx)
@@ -183,8 +180,6 @@ class NMPC:
         for k in range(H):
             self.optimizer.subject_to(self.X[k+1] == self.Fk_Inverse(self.X[k], self.A[k]))
             self.optimizer.subject_to(self.U[k] == self.hk_rnea(self.X[k], self.A[k]))
-            # opti.subject_to(X[k+1] == allDyn[k])
-            # opti.subject_to(U[k] == allU[k])
 
         self.optimizer.solver('fatrop', self.solverOptions)
 

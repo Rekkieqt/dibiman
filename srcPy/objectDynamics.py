@@ -154,7 +154,7 @@ def dynSolver(F, model, data, solOpts):
             # 'ipopt.tol': 1e-3
             }
 
-    opti.solver('fatrop', opts)
+    opti.solver('ipopt', opts)
 
     M = opti.to_function('NMPC', [x0, xrf, xnom], [U[0]])
 

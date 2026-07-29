@@ -2,7 +2,7 @@ import sys
 import os
 import casadi as ca
 from utils import *
-from nmpcArm import NMPC
+from nmpcBiMan import NMPC
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
@@ -11,75 +11,121 @@ import pinocchio.casadi as cpin
 
 def main():
     """ Option structs """
+    left = 'l_'
+    right = 'r_'
     dt = 0.05
     ocpParams = {
             'H': 50,
-            'r': 1,
-            'q': 7
+            'Ts': dt
             }
 
     armParams = {
             "path": os.getcwd() + '/../conf/model.urdf',
-            "joints": ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch'],
-            "arm": 'r_'
+            "joints": ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch']
             }
 
-    icubCtrler = NMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
+    objParams = {
+            "path": os.getcwd() + '/../conf/testBox.urdf',
+            'pl': None,
+            'pr': None
+            }
+
+    icubBi = NMPC(armParameters=armParams, ocpParameters=ocpParams)
 
     """
-    Control Loop
+    Initial Configuration
     """
-    model, data = icubCtrler.pinModelandData()
-    nv = model.nv
-    nq = model.nq
-    nu = nv
-    q0 = pin.randomConfiguration(model)
-    pin.forwardKinematics(model, data, q0)
-    pin.updateFramePlacements(model, data)
-    v0 = np.zeros([nv, ])
-    x0 = np.concatenate((q0, v0), axis=0)
-    qref = pin.randomConfiguration(model) 
-    uref = pin.rnea(model, data, qref, v0, v0)
-    xref = np.concatenate((qref, v0), axis=0)
+    # Object
+    # vector p to object c.o.m. frame
+    pObj = np.array([-.2, 0, .1])
+    lz = 0.2;
+
+    # Arms initial
+    p_r_arm = pObj + np.array([0, lz/2, 0])
+    p_l_arm = pObj + np.array([0, -lz/2, 0])
+    rpy_r = np.array([0, 0, np.pi/2])
+    rpy_l = rpy_r
+    Hi_r = pin.SE3(pin.rpy.rpyToMatrix(rpy_r), p_r_arm)
+    Hi_l = pin.SE3(pin.rpy.rpyToMatrix(rpy_l), p_l_arm)
+
+    qi_l = pin.randomConfiguration(icubBi.modelL)
+    qi_r = pin.randomConfiguration(icubBi.modelR)
+    qi_l = icubBi.inverseKinematics(icubBi.modelL, qi_l, Hi_l, left)
+    qi_r = icubBi.inverseKinematics(icubBi.modelR, qi_r, Hi_r, right)
+    vi_r = np.zeros([icubBi.modelL.nv, ])
+    vi_l = vi_r
+
+    pin.forwardKinematics(icubBi.modelR, icubBi.dataR, qi_r)
+    pin.updateFramePlacements(icubBi.modelR, icubBi.dataR)
+    Ree_r = icubBi.dataR.oMi[6].rotation.copy()
+    print(icubBi.dataR.oMi[6])
+    objParams['pr'] = icubBi.dataR.oMi[6].translation.copy()
+
+    pin.forwardKinematics(icubBi.modelL, icubBi.dataL, qi_l)
+    pin.updateFramePlacements(icubBi.modelL, icubBi.dataL)
+    Ree_l = icubBi.dataL.oMi[6].rotation.copy()
+    print(icubBi.dataL.oMi[6])
+    objParams['pl'] = icubBi.dataR.oMi[6].translation.copy()
+
+    # Init Solver
+    Ree_l_to_contact = Ree_l.T @ icubBi.R1
+    Ree_r_to_contact = Ree_r.T @ icubBi.R2
+    icubBi.initSolver(objParams, Ree_l_to_contact, Ree_r_to_contact)
+
+    # Desired object location
+    pRefObj = pObj + np.array([-0.05, 0.05, 0.1])
+
+    # Desired arms location
+    p_r_arm_ref = pRefObj + np.array([0, lz/2, 0])
+    p_l_arm_ref = pRefObj + np.array([0, -lz/2, 0])
+
+    Hf_r = pin.SE3(pin.rpy.rpyToMatrix(rpy_r), p_r_arm_ref)
+    Hf_l = pin.SE3(pin.rpy.rpyToMatrix(rpy_r), p_l_arm_ref)
+    qf_l = icubBi.inverseKinematics(icubBi.modelL, qi_l, Hf_l, left)
+    qf_r = icubBi.inverseKinematics(icubBi.modelR, qi_r, Hf_r, right)
+
+    tau_r_ref = pin.rnea(icubBi.modelR, icubBi.dataR, qf_l, vi_r, vi_r)
+    tau_l_ref = pin.rnea(icubBi.modelL, icubBi.dataL, qf_l, vi_l, vi_l)
+
+    """
+    Simulation variables
+    """
+    sys.exit()
 
     T = 8
     N = int(T/dt)
     t = np.linspace(0, T, N+1)
-    x = [None] * (N + 1)
-    q = [None] * (N + 1)
-    frames = []
-    p = np.zeros((3, N + 1))
-    u = [None] * N
 
-    x[0] = x0
-    q[0] = x[0][0:nq]
-    p[:, 0] = data.oMi[6].translation.copy()
-    frames.append(data.oMi[6].copy())
+    # Joint position
+    q_l = [None] * (N + 1)
+    v_l = [None] * (N + 1)
+
+    # Joint velocity
+    q_r = [None] * (N + 1)
+    v_r = [None] * (N + 1)
+
+    # Input Torques
+    u_l = [None] * N
+    u_r = [None] * N
+
+    # Forces
+    f_l = [None] * N
+    f_r = [None] * N
+
+    """ Initial state """
+    q_l[0] = qi_l
+    q_r[0] = qi_r
+
+    v_l[0] = vi_l
+    v_r[0] = vi_r
 
     for i in range(N):
-        # Plant simulation Control and warmstart
-        u[i] = icubCtrler.solve(x[i], xref, uref)
-        # u[i] = np.squeeze(M(x[i], xref, uref))
-        x[i + 1] = np.squeeze(icubCtrler.plantModel()(x[i], u[i]))
+        # Solve OCP
+        u_r[i], u_l[i] = icubBi.solve(q_r[i], q_l[i], v_r[i], v_l[i], qf_r, qf_l, tau_r_ref, tau_l_ref)
 
-        # Exctracting the trajectory
-        q[i + 1] = x[i + 1][:nq]
-        pin.forwardKinematics(model, data, q[i + 1])
-        pin.updateFramePlacements(model, data)
-        p[:, i + 1] = data.oMi[6].translation.copy()
+        # Update the models
+        q_r[i + 1], v_r[i + 1] = icubBi
 
-    # Extracting velocities
-    frames.append(data.oMi[6].copy())
-    v = [None] * (N + 1)
-    v = [xi[-nv:] for xi in x]
-
-    # Printing last result and references
-    # print('States, last measured vs ref')
-    # print(x[-1])
-    # print(xref)
-    # print('Torques, last measured vs ref')
-    # print(u[-1])
-    # print(uref)
 
     # --------------PLOTS-----------
     try:
