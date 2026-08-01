@@ -80,19 +80,22 @@ def plot3D(data):
     x = data['x']
     frames = data['frames']
 
-    X = np.array(x)
-    x = X[0, :]
-    y = X[1, :]
-    z = X[2, :]
+    # X = np.array(x)
+    # x = X[0, :]
+    # y = X[1, :]
+    # z = X[2, :]
 
     # Plot
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
     # Trajectory
-    ax.plot(x, y, z, label=xl, color='blue', linewidth=2)
-    ax.scatter(x[0], y[0], z[0], color='green', label='Start', s=50)
-    ax.scatter(x[-1], y[-1], z[-1], color='red', label='End', s=50)
+    for line, label in zip(x, xl):
+        X = np.array(line)
+        x = X[0, :]
+        y = X[1, :]
+        z = X[2, :]
+        axisAdder(ax, x, y, z, label)
 
     # Equal axis scaling workaround
     max_range = np.array([x.max()-x.min(), y.max()-y.min(), z.max()-z.min()]).max() / 2.0
@@ -114,12 +117,17 @@ def plot3D(data):
     ax.view_init(elev=30, azim=135)
 
     # Plot Frames
-    plotCoordinateFrame(ax, frames[0], size=0.05)
-    plotCoordinateFrame(ax, frames[-1], size=0.05)
+    if frames is not None:
+        plotCoordinateFrame(ax, frames[0], size=0.05)
+        plotCoordinateFrame(ax, frames[-1], size=0.05)
 
     plt.tight_layout()
     plt.show()
 
+def axisAdder(ax, x, y, z, xl):
+    ax.plot(x, y, z, label=xl, color='blue', linewidth=2)
+    ax.scatter(x[0], y[0], z[0], color='green', label='Start', s=50)
+    ax.scatter(x[-1], y[-1], z[-1], color='red', label='End', s=50)
 
 
 """ from https://github.com/ethz-asl/kalibr/tree/master """

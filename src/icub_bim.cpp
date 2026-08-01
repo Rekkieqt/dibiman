@@ -11,6 +11,7 @@
 #include <yarp/dev/IControlMode.h>
 #include <yarp/dev/IPositionControl.h>
 #include <yarp/dev/IEncoders.h>
+#include <yarp/dev/IAxisInfo.h>
 #include <yarp/sig/Matrix.h>
 #include <yarp/sig/Vector.h>
 #include <yarp/math/Math.h>
@@ -31,6 +32,7 @@
 #include "pinocchio/multibody/sample-models.hpp"
 #include "pinocchio/spatial/explog.hpp"
 #include "pinocchio/algorithm/kinematics.hpp"
+#include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/jacobian.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
 #include "pinocchio/algorithm/crba.hpp"
@@ -58,9 +60,9 @@ bool is_in_vector(const std::vector<T> & vector, const T & elt) {
 bool iKin(pinocchio::Model & model, pinocchio::Data & data, Eigen::VectorXd & q, Eigen::Ref<Eigen::VectorXd> q_m) {
 
   /* constants */
-  const int joint_id = 7; /* one extra because of universe, or just count from 1 */
+  const int joint_id = 6; /* one extra because of universe, or just count from 1 */
   const double eps = 1e-4;
-  const int IT_MAX = 500;
+  const int IT_MAX = 800;
   const double DT = 1e-1;
   const double damp = 1e-6;
   bool success = false;
@@ -165,10 +167,6 @@ int main(int argc, char **argv)
     std::string urdf_filename = rf.find("model").asString(); 
 
     int joints = rf.find("joints").asInt32();
-    double theta_dd_ref = rf.find("theta_dd").asFloat64();
-    double theta_d_ref = rf.find("theta_d").asFloat64();
-    double kv = rf.find("kv").asFloat64();
-    double kp = rf.find("kp").asFloat64();
     bool single_mode = rf.find("single").asBool();
     
     if (robotName=="")
@@ -177,49 +175,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    /* loading urdf with pinocchio*/
-    Model model, reduced_model;
-    pinocchio::urdf::buildModel(urdf_filename, model);
-
-    /* arm joints */
-    std::vector<std::string> arm_config = {"_shoulder_pitch", "_shoulder_roll", "_shoulder_yaw", "_elbow", "_wrist_prosup", "_wrist_pitch", "_wrist_yaw"};
-
-    /* joints to use */
-    for (auto it = arm_config.begin(); it != arm_config.end(); ++it){
-      *it = arm_prefix + *it;
-    }
-    std::vector<JointIndex> keep_unlocked_by_id, keep_locked_by_id;
-    for (std::vector<std::string>::const_iterator it = arm_config.begin();
-        it != arm_config.end();
-        ++it){
-      const std::string & joint_name = *it;
-      if (model.existJointName(joint_name)){
-        keep_unlocked_by_id.push_back(model.getJointId(joint_name));
-      }
-    }
-
-    /* invert the list */
-    for (JointIndex joint_id = 1; joint_id < model.joints.size(); ++joint_id) {
-      const std::string joint_name = model.names[joint_id];
-      if (is_in_vector(arm_config, joint_name)){
-        continue;
-      }
-      else {
-        keep_locked_by_id.push_back(joint_id);
-      }
-    }
-
-    /* sample random config */
-    Eigen::VectorXd q_full = randomConfiguration(model);
-
-    /* build the reduced model */
-    reduced_model = pinocchio::buildReducedModel(model, keep_locked_by_id, q_full);
-
-    /* Create data required by the algorithms */
-    Data data(reduced_model);
-
-    /* print random config */
-    /* pinocchio example end */
+    /* ++++++ YARP NETWORKING ++++++ */
 
     /* configuring in and out ports */
     /* where to connect */
@@ -248,14 +204,16 @@ int main(int argc, char **argv)
     IControlMode *controlMode;
     ITorqueControl *torqueControl;
     IPositionControl *positionControl;
-    IEncoders *q_sens;
+    IEncoders *armSensors;
+    IAxisInfo *axInfo;
 
     /* check if interfaces are available */
     bool ok;
     ok = robotDevice.view(controlMode);
     ok = ok && robotDevice.view(torqueControl);
     ok = ok && robotDevice.view(positionControl);
-    ok = ok && robotDevice.view(q_sens);
+    ok = ok && robotDevice.view(armSensors);
+    ok = ok && robotDevice.view(axInfo);
     
     if (!ok) {
         yError("Problems acquiring interfaces\n");
@@ -285,83 +243,100 @@ int main(int argc, char **argv)
         yarp::os::Time::delay(3);
     }
 
+    /* +++++++++++ Loading the Model ++++++++++++++*/
+    Model model, reduced_model;
+    pinocchio::urdf::buildModel(urdf_filename, model);
+
+    /* arm joints */
+    std::vector<std::string> arm_config = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch"};
+    /*, "_wrist_yaw"}; unused joint */
+
+    /* joints to use */
+    for (auto it = arm_config.begin(); it != arm_config.end(); ++it){
+      *it = arm_prefix + *it;
+    }
+    std::vector<JointIndex> keep_unlocked_by_id, keep_locked_by_id;
+    for (std::vector<std::string>::const_iterator it = arm_config.begin();
+        it != arm_config.end();
+        ++it){
+      const std::string & joint_name = *it;
+      if (model.existJointName(joint_name)){
+        keep_unlocked_by_id.push_back(model.getJointId(joint_name));
+      }
+    }
+
+    /* invert the list */
+    for (JointIndex joint_id = 1; joint_id < model.joints.size(); ++joint_id) {
+      const std::string joint_name = model.names[joint_id];
+      if (is_in_vector(arm_config, joint_name)){
+        continue;
+      }
+      else {
+        keep_locked_by_id.push_back(joint_id);
+      }
+    }
+
+    /* sample neutral config */
+    Eigen::VectorXd q_full = pinocchio::neutral(model);
+
+    /* build the reduced model */
+    reduced_model = pinocchio::buildReducedModel(model, keep_locked_by_id, q_full);
+
+    /* Create data required by the algorithms */
+    Data data(reduced_model);
+
+    /* +++++++++++ ARM CONTROL START ++++++++++++++*/
     /* remote controller */
-    int arm_joints = 0;
-    int idx_joints[] = {0, 1, 2, 3, 4, 5, 6};
+    int idx_joints[] = {0, 1, 2, 3, 4, 5};
+    int all_arm_joints = 0;
+    armSensors->getAxes(&all_arm_joints);
 
-    q_sens->getAxes(&arm_joints);
-
-    double* q_all = new double[arm_joints]; /* encoder positions */
-    double* qd_all = new double[arm_joints]; /* joint velocities */
-    double* qdd_meas = new double[joints]; /* dq^2/dt^2 -> theta 2dot of the revolute joints */
-    double* tau = new double[joints]; /* tau -> torque vector at the joints */ 
-    double* tau_meas = new double[arm_joints]; /* tau_meas -> measured torque vector at the joints */ 
+    /* Controlled joints */
+    double* q_sens = new double[joints]; /* joint positions */
+    double* v_sens = new double[joints]; /* joint velocities */
+    double* a_sens = new double[joints]; /* joint accelerations */
+    double* u_sens = new double[joints]; /* tau -> torque at the joints */ 
 
     /* dynamic link between double arrays and eigen arrays */
-    Eigen::Map<Eigen::VectorXd> q_meas_v(q_all, joints);
-    Eigen::Map<Eigen::VectorXd> qd_meas_v(qd_all, joints);
-    Eigen::Map<Eigen::VectorXd> qdd_meas_v(qdd_meas, joints);
-    Eigen::Map<Eigen::VectorXd> tau_v(tau, joints);
-    Eigen::Map<Eigen::VectorXd> tau_meas_v(tau_meas, joints);
-    Eigen::VectorXd q_ref_v;
+    Eigen::Map<Eigen::VectorXd> q_sens_Vec(q_sens, joints);
+    // Eigen::Map<Eigen::VectorXd> qd_meas_v(qd_all, joints);
+    // Eigen::Map<Eigen::VectorXd> qdd_meas_v(qdd_meas, joints);
+    // Eigen::Map<Eigen::VectorXd> tau_v(tau, joints);
+    // Eigen::Map<Eigen::VectorXd> tau_meas_v(tau_meas, joints);
 
-    /* create target velocities and accelerations of q */
-    Eigen::VectorXd qd_ref_v = theta_d_ref * Eigen::VectorXd::Ones(joints);
-    Eigen::VectorXd qdd_ref_v = theta_dd_ref * Eigen::VectorXd::Ones(joints);
-    Eigen::VectorXd error_vector(joints);
-    Eigen::VectorXd speed_error(joints);
-    Eigen::VectorXd pos_error(joints);
-    error_vector.setZero();
-    Eigen::VectorXd integral_vector(joints);
-    integral_vector.setZero();
-
-    /* diagonal matrices of gains */
-    Eigen::VectorXd Kv = kv * Eigen::VectorXd::Ones(joints);
-    Eigen::VectorXd Kp = kp * Eigen::VectorXd::Ones(joints);
-    Eigen::VectorXd Ki = kv * Eigen::VectorXd::Ones(joints);
-    
     std::string logfile = "../../logs/" + partName + ".csv";
     fstream file(logfile, ios::out | ios::trunc);
     logHeader(file, joints);
 
     /* set control mode for arm */
-    int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
-    controlMode->setControlModes(joints, idx_joints, modes);
-
-    /* get measurements */
-    while(!q_sens->getEncoders(q_all));
-    // q_ref_v = q_meas_v + 20*Eigen::VectorXd::Ones(joints);
-    // cout << "qref:" << q_ref_v.transpose() << endl;
+    int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
+    // controlMode->setControlModes(joints, idx_joints, modes);
 
     /* solve inverse kinematics */
-    iKin(reduced_model, data, q_ref_v, q_meas_v);
-
+    /* iKin(reduced_model, data, q_ref_v, q_meas_v); */
     /* log the ref angles */
-    std::string reffile = "../../logs/" + partName + "_ref.csv";
-    fstream ref(reffile, ios::out | ios::trunc);
-    logRef(ref, q_ref_v, joints);
-    ref.close();
+    // std::string reffile = "../../logs/" + partName + "_ref.csv";
+    // fstream ref(reffile, ios::out | ios::trunc);
+    /* logRef(ref, q_ref_v, joints); */
+    // ref.close();
+    int handID = reduced_model.getFrameId(arm_prefix + "hand");
 
-    for(;;) {
-        /* get measurements */
-        while(!q_sens->getEncoders(q_all));
-        while(!q_sens->getEncoderSpeeds(qd_all));
+    for (int i = 0; i < 2; i++) {
 
-        /* simple linearizing control */
-        speed_error = qd_ref_v - qd_meas_v;
-        pos_error = q_ref_v - q_meas_v;
-        // error_vector = qdd_ref_v + Kv.asDiagonal() * (speed_error) + Kp.asDiagonal() * (pos_error); /* error vector */
-        error_vector = Kv.asDiagonal() * (speed_error) + Kp.asDiagonal() * (pos_error); /* error vector */
-        pinocchio::rnea(reduced_model, data, q_meas_v, qd_meas_v.setZero(), qdd_meas_v.setZero()); /* obtain C matrix, located in data.tau*/
-        pinocchio::crba(reduced_model, data, q_meas_v); /* obtain M(q) matrix, data.M */
-        integral_vector += Kp.asDiagonal()*pos_error;
-        tau_v = error_vector + integral_vector + data.tau;
+        for (int j = 0; j < std::size(idx_joints) ; j++) {
+          armSensors->getEncoder(idx_joints[j], &q_sens[j]);
+          q_sens[j] = (M_PI/180) * q_sens[j];
+          std::cout << q_sens[j] << std::endl;
+        }
+        pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
+        pinocchio::updateFramePlacements(reduced_model, data);  
+        std::cout << data.oMf[handID] << std::endl;
 
         /* send torque commands */
-        ok = torqueControl->setRefTorques(joints, idx_joints, tau);
+        // ok = torqueControl->setRefTorques(joints, idx_joints, tau);
 
         /* write to file */
-        logData(file, tau_v, q_meas_v, joints);
+        // logData(file, tau_v, q_meas_v, joints);
 
         /* send info to other node(arm) */
         Bottle *b = recvPort.read(false);
@@ -375,11 +350,7 @@ int main(int argc, char **argv)
         s.addString(inPort);
         sendPort.write();
         
-        if (pos_error.norm() < 0.01) { /* arbitrary error criteria */
-          cout << "Desired acc achieved!!" << endl;
-          break;
-        }
-        yarp::os::Time::delay(0.01);
+        yarp::os::Time::delay(0.05);
     }
     /* cleanup, effectively useless because at the moment I ctrl+c from while */
     /* later can put this into 'graceful' exit with interrupt ... */
@@ -388,4 +359,4 @@ int main(int argc, char **argv)
     file.close();
     
     return 0;
-
+}

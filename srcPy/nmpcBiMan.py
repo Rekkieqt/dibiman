@@ -52,7 +52,7 @@ class NMPC:
                 # 'fatrop.print_level': 0,
                 # 'fatrop.tolerance': 1e-3,
                 # 'fatrop.max_iter': 200
-                'structure_detection': 'auto'
+                # 'structure_detection': 'auto'
                 # 'ipopt.hessian_approximation': 'limited-memory',
                 # 'ipopt.print_level': 0,
                 # 'ipopt.tol': 1e-3
@@ -62,6 +62,7 @@ class NMPC:
 
     def initSolver(self, objParameters, Rl, Rr):
         self.objVbk = self.objectDynamics(objParameters)
+        self.G = ca.horzcat(self.GR, self.GL)
 
         # Individual RNEAs
         self.hk_rneaR = self.rnea(self.modelR, Rr)
@@ -73,6 +74,9 @@ class NMPC:
         # Jacobians 
         self.hk_JacR = self.armJacobian(self.modelR, 'r_', Rr)
         self.hk_JacL = self.armJacobian(self.modelL, 'l_', Rl)
+
+        # Hand/Arms Jacobian
+        self.hk_Jh = self.handJacobian(self.modelR.nq)
 
         # Friction Cone constraint
         self.gForcek = self.softFingerGrasp()
@@ -97,7 +101,7 @@ class NMPC:
         for jn in jointsToLock:
             jointsToLockIDs.append(fullModel.getJointId(jn))
 
-        initConf = np.zeros([len(allJoints) - 1, 1])
+        initConf = pin.neutral(fullModel)
         model = pin.buildReducedModel(fullModel, jointsToLockIDs, initConf)
         return model
 
@@ -119,8 +123,9 @@ class NMPC:
         # State variables
         q = ca.SX.sym("q", cmodel.nq)
         v = ca.SX.sym("v", cmodel.nv)
+
         # Control variables
-        u = ca.SX.sym("tau", cmodel.nu)
+        u = ca.SX.sym("tau", cmodel.nv)
         f = ca.SX.sym("f_ext", 6)
 
         # ABA
@@ -132,12 +137,14 @@ class NMPC:
         f = ca.Function('aba', [x, u], [dx], ['x', 'u'], ['ode'])
 
         # Integrator
-        I = ca.integrator('I', 'rk4', {'x': x, 'p': u, 'ode': f(x, u)}, 0, self.dt)
+        I = ca.integrator('I', 'rk', {'x': x, 'p': u, 'ode': f(x, u)}, 0, self.dt)
         x0 = x
         res = I(x0=x0, p=u)
         xk = res['xf']
-        # self.Fk = integrator(dx_f, modOpts)
-        return ca.Function('ddqk', [x0, u], [xk], ['q_v', 'tau'], ['qk_vk'])
+
+        qk = xk[:cmodel.nq]
+        vk = xk[cmodel.nv:]
+        return ca.Function('ddqk', [q, v, u], [qk, vk], ['qk', 'vk', 'tau'], ['qk_next', 'vk_next'])
 
     def rnea(self, model, R=np.eye(3)) -> ca.Function:
         cmodel = cpin.Model(model)
@@ -183,8 +190,8 @@ class NMPC:
     def inverseKinematics(self, model, q0, Href, arm):
         data = model.createData()
         eps = 1e-6  
-        IT_MAX = 2000
-        DT = 1e-2  
+        IT_MAX = 4000
+        DT = 1e-1
         damp = 1e-12  
         frame = arm + 'hand'
         frame_id = model.getFrameId(frame)
@@ -270,16 +277,16 @@ class NMPC:
 
         # Grasp Matrices 1 and 2
         M1 = pin.SE3(self.R1, np.zeros((3, )))
-        G1 = M1.dualAction @ self.B
+        self.GR = M1.dualAction @ self.B
         M2 = pin.SE3(self.R2, np.zeros((3, )))
-        G2 = M2.dualAction @ self.B
+        self.GL = M2.dualAction @ self.B
 
         # Body Wrenches
         f1 = ca.SX.sym('wrench1', 6)
         f2 = ca.SX.sym('wrench2', 6)
         
         # Forces on the body
-        Fo = G1 * f1 + G2 * f2
+        Fo = self.GR * f1 + self.GL * f2
         Fg = R.T @ np.array([0, 0, -9.8])
 
         # Body frame instantenous velocity
@@ -299,6 +306,20 @@ class NMPC:
         Vk = V0 + dV * self.dt
         
         return ca.Function('Jh', [V0, f1, f2], [Vk], ['v0', 'f1', 'f2'], ['Vk'])
+
+    def handJacobian(self, nq) -> ca.Function:
+        qR = ca.SX.sym('qR', nq)
+        qL = ca.SX.sym('qL', nq)
+
+        vR = ca.SX.sym('vR', nq)
+        vL = ca.SX.sym('vL', nq)
+
+        modVelR = self.B @ self.hk_JacR(qR) @ vR
+        modVelL = self.B @ self.hk_JacL(qL) @ vL
+
+        conVelArms = ca.vertcat(modVelR, modVelL)
+
+        return ca.Function('hand_jac_constraint', [qR, qL, vR, vL], [conVelArms], ['qR', 'qL', 'vR', 'vL'], ['velConstraintArms'])
 
     def rneaSolver(self, nq):
         optimizer = ca.Opti()
@@ -323,7 +344,7 @@ class NMPC:
             obj += self.runningCost(i)
 
         # Terminal Cost
-        obj += self.terminalCost(self.qrefR, self.qrefL)
+        # obj += self.terminalCost(self.qrefR, self.qrefL)
 
         optimizer.minimize(obj)
 
@@ -332,14 +353,14 @@ class NMPC:
         self.v0R = optimizer.parameter(nq)
         self.q0L = optimizer.parameter(nq)
         self.v0L = optimizer.parameter(nq)
-        self.vObj0 = optimizer.parameter(6)
+        # self.vObj0 = optimizer.parameter(6)
 
         # Subject to the model/ descrete function
         optimizer.subject_to(self.QR[0] == self.q0R)
         optimizer.subject_to(self.VR[0] == self.v0R)
         optimizer.subject_to(self.QL[0] == self.q0L)
         optimizer.subject_to(self.VL[0] == self.v0L)
-        optimizer.subject_to(self.Vo[0] == self.vObj0)
+        # optimizer.subject_to(self.Vo[0] == self.vObj0)
 
         for k in range(self.H):
             # xk+1 = f(xk, uk)
@@ -347,23 +368,29 @@ class NMPC:
             # h(xk, uk) = 0
             self.h(optimizer, k)
             # g(xk, uk) >= 0
-            self.g(optimizer, k)
+            # self.g(optimizer, k)
 
-        optimizer.solver('fatrop', self.solverOptions)
+        optimizer.solver('ipopt', self.solverOptions)
         return optimizer
 
     def F(self, optimizer, k) -> None:
-        qk, vk = self.Fk_Inverse(self.QR[k], self.VR[k], self.AR[k])
-        optimizer.subject_to(self.QR[k + 1] == qk)
-        optimizer.subject_to(self.VR[k + 1] == vk)
-        qk, vk = self.Fk_Inverse(self.QL[k], self.VL[k], self.AL[k])
-        optimizer.subject_to(self.QL[k + 1] == qk)
-        optimizer.subject_to(self.VL[k + 1] == vk)
-        optimizer.subject_to(self.Vo[k + 1] == self.objVbk(self.Vo[k], self.FR[k], self.FL[k]))
+        # qk, vk = self.Fk_Inverse(self.QR[k], self.VR[k], self.AR[k])
+        optimizer.subject_to(self.QR[k + 1] == self.QR[k] + self.VR[k] * self.dt)
+        optimizer.subject_to(self.VR[k + 1] == self.VR[k] + self.AR[k] * self.dt)
+        # qk, vk = self.Fk_Inverse(self.QL[k], self.VL[k], self.AL[k])
+        optimizer.subject_to(self.QL[k + 1] == self.QL[k] + self.VL[k] * self.dt)
+        optimizer.subject_to(self.VL[k + 1] == self.VL[k] + self.AL[k] * self.dt)
+        # optimizer.subject_to(self.Vo[k + 1] == self.objVbk(self.Vo[k], self.FR[k], self.FL[k]))
 
     def h(self, optimizer, k) -> None:
-        optimizer.subject_to(self.UR[k] == self.hk_rneaR(self.QR[k], self.VR[k], self.AL[k], self.FL[k]))
-        optimizer.subject_to(self.UL[k] == self.hk_rneaL(self.QL[k], self.VL[k], self.AR[k], self.FR[k]))
+        # Inverse dynamics constraint
+        optimizer.subject_to(self.UR[k] == self.hk_rneaR(self.QR[k], self.VR[k], self.AR[k], self.FR[k]))
+        optimizer.subject_to(self.UL[k] == self.hk_rneaL(self.QL[k], self.VL[k], self.AL[k], self.FL[k]))
+
+        # Fundamental grasp constraint
+        # optimizer.subject_to(self.G.T @ self.Vo[k] == self.hk_Jh(self.QR[k], self.QL[k], self.VR[k], self.VL[k]))
+        # Same velocity constraint
+        # optimizer.subject_to(self.hk_JacR(self.QR[k]) @ self.VR[k] == self.hk_JacL(self.QL[k]) @ self.VL[k])
 
     def g(self, optimizer, k) -> None:
         optimizer.subject_to(self.gForcek(self.FR[k]) >= 0)
@@ -400,14 +427,14 @@ class NMPC:
         self.AL.append(optimizer.variable(nq))
         self.UL.append(optimizer.variable(nq))
         self.FL.append(optimizer.variable(6))
-        self.Vo.append(optimizer.variable(6))
+        # self.Vo.append(optimizer.variable(6))
 
     def terminalVars(self, optimizer, nq):
         self.QR.append(optimizer.variable(nq))
         self.QL.append(optimizer.variable(nq))
         self.VR.append(optimizer.variable(nq))
         self.VL.append(optimizer.variable(nq))
-        self.Vo.append(optimizer.variable(6))
+        # self.Vo.append(optimizer.variable(6))
 
 
     def solve(self, q0R, q0L, v0R, v0L, qRefR, qRefL, uRefR, uRefL):
@@ -416,10 +443,12 @@ class NMPC:
         self.opti.set_value(self.q0L, q0L)
         self.opti.set_value(self.v0R, v0R)
         self.opti.set_value(self.v0L, v0L)
-        self.opti.set_value(self.qrfR, qRefR)
-        self.opti.set_value(self.qrfL, qRefL)
-        self.opti.set_value(self.urfR, uRefR)
-        self.opti.set_value(self.urfL, uRefL)
+        self.opti.set_value(self.qrefR, qRefR)
+        self.opti.set_value(self.qrefL, qRefL)
+        self.opti.set_value(self.urefR, uRefR)
+        self.opti.set_value(self.urefL, uRefL)
+
+        # self.opti.set_value(self.vObj0, vObject)
 
         # Warm Start
         # self.set_initial(self.opti)
@@ -427,7 +456,7 @@ class NMPC:
         # Solve
         solution = self.opti.solve()
         # self.updateSolution(solution)
-        return solution.value(self.UR[0]), solution.value(self.UL[0])
+        return np.squeeze(solution.value(self.UR[0])), np.squeeze(solution.value(self.UL[0])) # solution.value(self.Vo[1])
 
 """ Warm Start
     def set_initial(self, optimizer) -> None:
