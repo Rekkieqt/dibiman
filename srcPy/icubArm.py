@@ -48,17 +48,13 @@ def main():
             np.eye(3),
             np.ones((3, ))
             )
-    print(icubCtrler.data)
-    sys.exit()
+
     nv = model.nv
     nq = model.nq
     nu = nv
     q0 = pin.randomConfiguration(model)
     pin.forwardKinematics(model, data, q0)
     pin.updateFramePlacements(model, data)
-    print(data.oMi[6].translation)
-    print(data.oMi[6].rotation)
-    print(data.oMi[6])
     v0 = np.zeros([nv, ])
     x0 = np.concatenate((q0, v0), axis=0)
     qref = pin.randomConfiguration(model) 

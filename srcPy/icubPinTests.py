@@ -21,7 +21,7 @@ def main():
     armParams = {
             "path": os.getcwd() + '/../conf/model.urdf',
             "joints": ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch'],
-            "arm": 'r_'
+            "arm": 'l_'
             }
 
     icubCtrler = armNMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
@@ -30,7 +30,7 @@ def main():
     Control Loop
     """
     model, data = icubCtrler.pinModelandData()
-    with open('rightArmData.txt', 'w+') as f:
+    with open('leftArmData.txt', 'w+') as f:
         # Joints with their names
         f.write("JOINTS:\n")
         for i in range(model.njoints):

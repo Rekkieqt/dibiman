@@ -15,7 +15,7 @@ def main():
     right = 'r_'
     dt = 0.05
     ocpParams = {
-            'H': 1,
+            'H': 10,
             'Ts': dt
             }
 
@@ -99,8 +99,10 @@ def main():
     qf_l = icubBi.inverseKinematics(icubBi.modelL, qi_l, Hf_l, left)
     qf_r = icubBi.inverseKinematics(icubBi.modelR, qi_r, Hf_r, right)
 
-    tau_r_ref = pin.rnea(icubBi.modelR, icubBi.dataR, qf_l, vi_r, vi_r)
+    tau_r_ref = pin.rnea(icubBi.modelR, icubBi.dataR, qf_r, vi_r, vi_r)
     tau_l_ref = pin.rnea(icubBi.modelL, icubBi.dataL, qf_l, vi_l, vi_l)
+
+    sys.exit()
 
     """
     Simulation variables
@@ -149,6 +151,7 @@ def main():
 
         # Solve OCP
         try:
+            # u_r[i], f_r[i], u_l[i], f_l[i] = icubBi.solve(q_r[i], q_l[i], v_r[i], v_l[i], qf_r, qf_l, tau_r_ref, tau_l_ref)
             u_r[i], u_l[i] = icubBi.solve(q_r[i], q_l[i], v_r[i], v_l[i], qf_r, qf_l, tau_r_ref, tau_l_ref)
 
         except Exception as e:
@@ -156,8 +159,8 @@ def main():
             raise
 
         # Update the models
-        q_r[i + 1], v_r[i + 1] = icubBi.forwardDynamics(icubBi.modelR)(q_r[i], v_r[i], u_r[i])
-        q_l[i + 1], v_l[i + 1] = icubBi.forwardDynamics(icubBi.modelL)(q_l[i], v_l[i], u_l[i])
+        q_r[i + 1], v_r[i + 1] = icubBi.forwardDynamics(icubBi.modelR, Ree_r_to_contact)(q_r[i], v_r[i], u_r[i])
+        q_l[i + 1], v_l[i + 1] = icubBi.forwardDynamics(icubBi.modelL, Ree_l_to_contact)(q_l[i], v_l[i], u_l[i])
         q_r[i + 1] = np.squeeze(q_r[i + 1])
         q_l[i + 1] = np.squeeze(q_l[i + 1])
         v_r[i + 1] = np.squeeze(v_r[i + 1])
@@ -173,8 +176,6 @@ def main():
         p_l[i + 1] = icubBi.dataL.oMf[leftHandID].translation.copy()
 
 
-    print(p_r[0])
-    print(p_r)
     # --------------PLOTS-----------
     try:
         import matplotlib.pyplot as plt
@@ -232,6 +233,24 @@ def main():
             'ylabel': 'Joint Velocities [rad/s]',
             'title': 'Joint Velocities (left)',
             })
+
+        # plotTraj({
+        #     'x':f_r,
+        #     'xref':vi_r,
+        #     't':t,
+        #     'xlabel': 'Time [s]',
+        #     'ylabel': 'Right Contact Wrench',
+        #     'title': 'Contact Forces applied (right)',
+        #     })
+
+        # plotTraj({
+        #     'x':f_l,
+        #     'xref':vi_l,
+        #     't':t,
+        #     'xlabel': 'Time [s]',
+        #     'ylabel': 'Left Contact Wrench',
+        #     'title': 'Contact Forces applied (left)',
+        #     })
 
         plot3D({
             'x':[p_r, p_l],
