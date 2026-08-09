@@ -34,11 +34,9 @@ def main():
 
     objParams = {
             "path": os.getcwd() + '/../conf/testBox.urdf',
-            'pl': None,
-            'pr': None
             }
 
-    iBee = armNMPC(armParameters=armParams, Ts=dt, ocpParameters=ocpParams)
+    iBee = armNMPC(armParameters=armParams, Ts=dt, ocpParameters=ocpParams, objectParameters=objParams)
     nq = iBee.models[0].nq
     nv = iBee.models[0].nv
 
@@ -46,29 +44,9 @@ def main():
     Initial Configuration
     """
 
-    # Arms initial
-    p_r_arm = np.array([-0.24295, 0.189132, 0.0184444])
-    p_l_arm = np.array([-0.243011, -0.189058, 0.0187189])
-    R_r_arm = np.array([
-        [0.862048, 0.21001, -0.46127],
-        [-0.316008, 0.93426, -0.165219],
-        [0.396248, 0.288192, 0.871741]
-    ])
-    R_l_arm = np.array([
-        [-0.862038, 0.209971, -0.461305],
-        [-0.316018, -0.934241, 0.165305],
-        [-0.396261, 0.28828, 0.871706]
-    ])
-    Hi_r = pin.SE3(R_r_arm, p_r_arm)
-    Hi_l = pin.SE3(R_l_arm, p_l_arm)
-
     # Hand Ids
     rightHandID = iBee.models[0].getFrameId(right + 'hand')
     leftHandID = iBee.models[1].getFrameId(left + 'hand')
-
-    # Object
-    # vector p to object c.o.m. frame
-    pObj = (p_l_arm + p_r_arm)/2
 
     qi_l = pin.neutral(iBee.models[1])
     qi_r = pin.neutral(iBee.models[0])
@@ -85,14 +63,6 @@ def main():
     Ree_l = iBee.datas[1].oMf[leftHandID].rotation.copy()
     p_l_arm = iBee.datas[1].oMf[leftHandID].translation.copy()
     
-    # Init Solver
-    # Ree_l_to_contact = Ree_l.T @ iBee.R1
-    # Ree_r_to_contact = Ree_r.T @ iBee.R2
-    # iBee.initSolver(objParams, Ree_l_to_contact, Ree_r_to_contact)
-
-    # Desired object location
-    pRefObj = pObj + np.array([0, 0, 0.05])
-
     # Desired arms location
     p_r_arm_ref = p_r_arm + np.array([0, 0, 0.01])
     p_l_arm_ref = p_l_arm + np.array([0, 0, 0.01])
@@ -120,6 +90,14 @@ def main():
     # Joint position and velocity
     x_r = [None] * (N + 1)
     x_l = [None] * (N + 1)
+    
+    # Joint Positions
+    q_r = [None] * (N + 1)
+    q_l = [None] * (N + 1)
+
+    # Joint Velocities
+    v_r = [None] * (N + 1)
+    v_l = [None] * (N + 1)
 
     # Input Torques
     u_l = [None] * N
@@ -129,8 +107,9 @@ def main():
     f_l = [None] * N
     f_r = [None] * N
 
-    # Object velocity
-    v_obj = [None] * (N + 1)
+    # Spatial twist (w.r.t. WORLD)
+    twist_r = np.zeros((6, N + 1))
+    twist_l = np.zeros((6, N + 1))
 
     # Arm vectors
     p_r = np.zeros((3, N + 1))
@@ -140,11 +119,14 @@ def main():
     x_r[0] = np.concatenate((qi_r, vi_r), axis=0)
     x_l[0] = np.concatenate((qi_l, vi_l), axis=0)
 
-    v_obj[0] = vi_l
-
     p_r[:, 0] = p_r_arm
     p_l[:, 0] = p_l_arm
-    
+
+    q_r[0] = qi_r
+    q_l[0] = qi_l
+
+    v_r[0] = vi_r
+    v_l[0] = vi_l
 
     for i in range(N):
 
@@ -160,29 +142,31 @@ def main():
         x_r[i + 1] = np.squeeze(iBee.Fk_Forward_r(x_r[i], u_r[i]))
         x_l[i + 1] = np.squeeze(iBee.Fk_Forward_l(x_l[i], u_l[i]))
 
+        q_r[i + 1] = x_r[i + 1][0:nq].copy()
+        q_l[i + 1] = x_l[i + 1][0:nq].copy()
+
+        v_r[i + 1] = x_r[i + 1][nq:].copy()
+        v_l[i + 1] = x_l[i + 1][nq:].copy()
+
         # Update placements
-        pin.forwardKinematics(iBee.models[0], iBee.datas[0], x_r[i + 1][:nq])
+        pin.forwardKinematics(iBee.models[0], iBee.datas[0], x_r[i + 1][:nq], x_r[i + 1][nq:])
+        twist_r[:, i + 1] = pin.getFrameVelocity(iBee.models[0], iBee.datas[0], rightHandID, pin.WORLD)
         pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
         p_r[:, i + 1] = iBee.datas[0].oMf[rightHandID].translation.copy()
 
-        pin.forwardKinematics(iBee.models[1], iBee.datas[1], x_l[i + 1][:nq])
+        pin.forwardKinematics(iBee.models[1], iBee.datas[1], x_l[i + 1][:nq], x_l[i + 1][nq:])
+        twist_l[:, i + 1] = pin.getFrameVelocity(iBee.models[1], iBee.datas[1], leftHandID, pin.WORLD)
         pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
         p_l[:, i + 1] = iBee.datas[1].oMf[leftHandID].translation.copy()
 
 
-    extract_Data = {
-            'p_r' : p_r,
-            'x_r' : x_r,
-            'u_r' : u_r
-            }
-    savemat('output.mat', extract_Data)
     # --------------PLOTS-----------
     try:
         import matplotlib.pyplot as plt
 
         plotTraj({
-            'x':x_r,
-            'xref':xf_r,
+            'x':q_r,
+            'xref':xf_r[:nq],
             't':t,
             'xlabel': 'Time [s]',
             'ylabel': 'Joint Angles [rad]',
@@ -190,11 +174,29 @@ def main():
             })
 
         plotTraj({
-            'x':x_l,
-            'xref':xf_l,
+            'x':q_l,
+            'xref':xf_l[:nq],
             't':t,
             'xlabel': 'Time [s]',
             'ylabel': 'Joint Angles [rad]',
+            'title': 'Joint Reference Tracking (left)',
+            })
+
+        plotTraj({
+            'x':v_r,
+            'xref':xf_r[nq:],
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Joint Velocities [rad/s]',
+            'title': 'Joint Reference Tracking (right)',
+            })
+
+        plotTraj({
+            'x':v_l,
+            'xref':xf_l[nq:],
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Joint Velocities [rad/s]',
             'title': 'Joint Reference Tracking (left)',
             })
 
@@ -216,40 +218,21 @@ def main():
             'title': 'Torque Reference Tracking (left)',
             })
 
-        # plotTraj({
-        #     'x':v_r,
-        #     'xref':vi_r,
-        #     't':t,
-        #     'xlabel': 'Time [s]',
-        #     'ylabel': 'Joint Velocities [rad/s]',
-        #     'title': 'Joint Velocities (right)',
-        #     })
+        plotErr({
+            'x':np.linalg.norm(p_r - p_l, axis=0),
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Distance [m]',
+            'title': 'End-Effector Distance during trajectory'
+            })
 
-        # plotTraj({
-        #     'x':v_l,
-        #     'xref':vi_l,
-        #     't':t,
-        #     'xlabel': 'Time [s]',
-        #     'ylabel': 'Joint Velocities [rad/s]',
-        #     'title': 'Joint Velocities (left)',
-        #     })
-
-        # plotTraj({
-        #     'x':f_r,
-        #     'xref':vi_r,
-        #     't':t,
-        #     'xlabel': 'Time [s]',
-        #     'ylabel': 'Right Contact Wrench',
-        #     'title': 'Contact Forces applied (right)',
-        #     })
-
-        # plotTraj({
-        #     'x':f_l,
-        #     'xref':vi_l,
-        #     't':t,
-        #     'xlabel': 'Time [s]',
-        #     'ylabel': 'Left Contact Wrench',
-        #     'title': 'Contact Forces applied (left)',
+        plotErr({
+            'x':np.linalg.norm(twist_r - twist_l, axis=0),
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Euclidian l2 norm of the difference of spatial twists left and right',
+            'title': 'End-Effector Difference between spatial twists'
+            })
 
         color_scheme_r = {
             'line': 'teal',
@@ -267,6 +250,14 @@ def main():
             'x':[p_r, p_l],
             'xlabel': ['Right Arm', 'Left Arm'],
             'title': 'iCub Arms Control',
+            'colors': [color_scheme_r, color_scheme_l],
+            'frames': None
+            })
+
+        plot3D({
+            'x':[twist_r, twist_l],
+            'xlabel': ['Right Arm Twist', 'Left Arm Twist'],
+            'title': 'iCub Arms Twists',
             'colors': [color_scheme_r, color_scheme_l],
             'frames': None
             })

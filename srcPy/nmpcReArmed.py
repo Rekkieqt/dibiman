@@ -9,36 +9,16 @@ import pinocchio.casadi as cpin
 # print(dir(cpin)) -> prints callable functions
 
 class armNMPC:
-    def __init__(self, armParameters, Ts, ocpParameters):
+    def __init__(self, armParameters, Ts, ocpParameters, objectParameters):
         # Loading the model of the arm from full body URDF
         self.models = []
         for arm in armParameters:
             self.models.append(self.getArmModel(arm))
-        self.datas = []
-        for model in self.models:
-            self.datas.append(model.createData())
-
-        self.nq = self.models[0].nq
-        self.nv = self.models[0].nv
-        self.na = self.nq
-        self.nu = self.na
-        self.nx = self.nq + self.nv
-
-        # Model Dynamics
-        self.dt = Ts
-        self.H = ocpParameters['H']
-        # self.Fk_Forward = self.forwardModel(self.cmodel, self.cdata)
-        self.Fk_Inverse = self.inverseModel(self.nq)
-
-        self.Fk_Forward_r = self.forwardModel(self.models[0])
-        self.Fk_Forward_l = self.forwardModel(self.models[1])
-        # self.Fk_Inverse, self.hk_rnea = self.inverseModel(self.models[0])
 
         # Solver Initialization
         self.optimizer = ca.Opti()
-        self.solverVariablesInit()
         self.solverOptions = {
-                'print_time': 1,
+                'print_time': 0,
                 'expand': True,
                 # 'debug': True,
                 # 'jit': True,
@@ -48,7 +28,7 @@ class armNMPC:
                 # 'fatrop.max_iter': 200
                 # 'structure_detection': 'auto'
                 # 'ipopt.hessian_approximation': 'limited-memory',
-                # 'ipopt.print_level': 0,
+                'ipopt.print_level': 0,
                 # 'ipopt.tol': 1e-3
                 }
         self.rneaSolver(ocpParameters)
@@ -76,6 +56,57 @@ class armNMPC:
         data = model.createData()
 
         return model
+
+    def objectDynamics(self, params) -> ca.Function:
+        """
+        Object in Body Newton-Euler Equations
+        """
+        model = pin.buildModelFromUrdf(params['path'], pin.JointModelFreeFlyer())
+        data = model.createData()
+        inertias = model.inertias[0]
+        R = ca.DM.eye(3) # Rotation matrix of the body to the inertial/world frame
+        I = inertias.inertia # Inertia tensor 3x3
+        m = inertias.mass # Object Mass
+        massMat = ca.horzcat(m * ca.DM.eye(3), ca.DM.zeros((3, 3)))
+        inertMat = ca.horzcat(ca.DM.zeros((3, 3)), I)
+        M = ca.vertcat(massMat, inertMat)
+
+        # Contact locations
+        # p1 = params['pr']
+        # p2 = params['pl']
+        # Grasp Matrices 1 and 2
+        # M1 = pin.SE3(self.R1, np.zeros((3, )))
+        # self.GR = M1.dualAction @ self.B
+        # M2 = pin.SE3(self.R2, np.zeros((3, )))
+        # self.GL = M2.dualAction @ self.B
+
+        # Body Wrenches
+        f1 = ca.SX.sym('wrench1', 6)
+        f2 = ca.SX.sym('wrench2', 6)
+        
+        # Forces on the body
+        hnet = f1 + f2
+        Fg = R.T @ np.array([0, 0, -9.8])
+
+        # Body frame instantenous velocity
+        w = ca.SX.sym('omega', 3)
+        v = ca.SX.sym('v', 3)
+
+        # Cross products
+        dv = - m * ca.cross(w, v) + Fg
+        dw = - ca.cross(w, I @ w)
+        
+        # Combined body velocity vector
+        dV = ca.vertcat(dv, dw)
+        dV = ca.inv(M) @ (dV + hnet)
+        twist = ca.vertcat(v, w)
+
+        # Explicit Euler integration
+        # V0 = ca.SX.sym('Vk', 6)
+        # Vk = V0 + dV * self.dt
+        # return ca.Function('Jh', [V0, f1, f2], [Vk], ['v0', 'f1', 'f2'], ['Vk'])
+
+        return ca.Function('ObjDynEq', [twist, f1, f2], [dV], ['vel', 'f1', 'f2'], ['acc'])
 
     def inverseModel(self, nq):
         """
@@ -166,7 +197,57 @@ class armNMPC:
         return ca.Function('Fk', [x, u], [xk], ['x0', 'u'], ['xf']).expand()
         # self.Fk = integrator(dx_f, modOpts)
 
+    def armJacobian(self, model, arm) -> ca.Function:
+        # B.T @ Ri @ J(q) B = Identity so its omitted
+        cmodel = cpin.Model(model)
+        cdata = cmodel.createData()
+
+        q = ca.SX.sym('q', cmodel.nq)
+        v = ca.SX.sym('v', cmodel.nv)
+
+        frame = arm + 'hand'
+        frameID = cmodel.getFrameId(frame)
+
+        J = cpin.computeFrameJacobian(cmodel, cdata, q, frameID, pin.WORLD)
+
+        dx = J @ v
+        lin_vel = dx[0:3]
+        x = ca.vertcat(q, v)
+        # return ca.Function('J_obj', [q], [J_custom], ['q'], ['Jac'])
+        return ca.Function('J_obj', [x], [lin_vel], ['x'], ['spatial_vel'])
+
+    def objForceSolver(self, objectParams, T=1) -> None:
+        opti = ca.Opti()
+        objDynamics = self.objectDynamics(objectParams)
+
+        H = int(T/self.dt)
+
+        F1 = []
+        F2 = []
+        twistV = ca.DM.zeros((6, ))
+        for k in range(H):
+            F1.append(opti.variable(6))
+            F2.append(opti.variable(6))
+        
+        obj = 0
+        for i in range(H):
+            obj += sumsqr(F1[i])
+            obj += sumsqr(F2[i])
+
+        opti.minimize(obj)
+
+        # Subject to the model/ descrete function
+        for k in range(H):
+            opti.subject_to(objDynamics(twistV, F1[k], F2[k]) == 0)
+
+        solution = opti.solve()
+        F1_star = np.squeeze(solution.value(F1))
+        F2_star = np.squeeze(solution.value(F2))
+        
+        return F1_star, F2_star
+
     def rneaSolver(self, params) -> None:
+        self.solverVariablesInit()
         r = params['r']
         q = params['q']
         H = params['H']
@@ -178,10 +259,9 @@ class armNMPC:
             self.Xl.append(self.optimizer.variable(self.nx))
             self.Ul.append(self.optimizer.variable(self.nu))
             self.Al.append(self.optimizer.variable(self.na))
+            self.S.append(self.optimizer.variable(self.nJ))
         self.Xr.append(self.optimizer.variable(self.nx))
-        self.Ar.append(self.optimizer.variable(self.na))
         self.Xl.append(self.optimizer.variable(self.nx))
-        self.Al.append(self.optimizer.variable(self.na))
         
         # Cost function
         R = r * ca.DM.eye(self.nu)
@@ -198,6 +278,11 @@ class armNMPC:
             obj += ca.mtimes([(self.Ul[i] - self.urfl).T, R, self.Ul[i] - self.urfl])
             obj += ca.mtimes([(self.Al[i]).T, Qa, self.Al[i]])
 
+            obj += 10000 * ca.sumsqr(self.S[i])
+
+            # err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
+            # obj += 50 * err.T @ err
+
         self.optimizer.minimize(obj)
         """ Add terminal cost later... """
 
@@ -210,6 +295,9 @@ class armNMPC:
 
             self.optimizer.subject_to(self.Xl[k+1] == self.Fk_Inverse(self.Xl[k], self.Al[k]))
             self.optimizer.subject_to(self.Ul[k] == self.rnea(self.models[1])(self.Xl[k], self.Al[k]))
+
+            err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
+            self.optimizer.subject_to(err - self.S[k] <= 0)
 
         self.optimizer.solver('ipopt', self.solverOptions)
 
@@ -230,6 +318,7 @@ class armNMPC:
         self.Xinit = [np.zeros((self.nx, )) for _ in range(self.H + 1)]
         self.Ainit = [np.zeros((self.na, )) for _ in range(self.H)]
         self.Uinit = [np.zeros((self.nu, )) for _ in range(self.H)]
+        self.S = []
 
     def cost_function(self, x, xref, w):
         loss = w * (x - xref).T @ (x - xref)

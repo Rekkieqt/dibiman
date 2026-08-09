@@ -116,7 +116,7 @@ class NMPC:
         vk = v + self.dt * a
         return ca.Function('Fk', [q, v, a], [qk, vk], ['q', 'v', 'a'], ['qk', 'vk']).expand()
 
-    def forwardDynamics(self, model):
+    def forwardDynamics(self, model, R=np.eye(3)):
         cmodel = cpin.Model(model)
         cdata = cmodel.createData()
 
@@ -125,25 +125,37 @@ class NMPC:
         v = ca.SX.sym("v", cmodel.nv)
 
         # Control variables
+        # tau = ca.SX.sym("tau", cmodel.nv)
         u = ca.SX.sym("tau", cmodel.nv)
         f = ca.SX.sym("f_ext", 6)
 
+        contactFrame = cpin.SE3(
+                ca.SX(R),
+                ca.SX.zeros(3)
+                )
+
+        # Mapping body frame forces to object contact forces
+        f_contact = cpin.Force(f)
+        # f_joint6 = f_contact.se3ActionInverse(contactFrame)
+
+        f_ext = [cpin.Force(ca.SX.zeros(6)) for _ in range(model.njoints)]
+        f_ext[6] = f_contact.se3ActionInverse(contactFrame)
+        # f_ext[6] = cpin.Force(f)  # End-effector is joint index 6
+
         # ABA
-        a = cpin.aba(cmodel, cdata, q, v, u)  # ODE format of the manipulator dynamics
-        dx = ca.vertcat(v, a)
-        x = ca.vertcat(q, v)
+        # a = cpin.aba(cmodel, cdata, q, v, tau, f_ext)
+        a = cpin.aba(cmodel, cdata, q, v, u)
+        # dx = ca.vertcat(v, a)
+        # x = ca.vertcat(q, v)
+        # u = ca.vertcat(f, tau)
 
         # State concatenation
-        f = ca.Function('aba', [x, u], [dx], ['x', 'u'], ['ode'])
+        # aba = ca.Function('aba', [q, v, u], [a], ['x', 'u'], ['ode'])
 
         # Integrator
-        I = ca.integrator('I', 'rk', {'x': x, 'p': u, 'ode': f(x, u)}, 0, self.dt)
-        x0 = x
-        res = I(x0=x0, p=u)
-        xk = res['xf']
-
-        qk = xk[:cmodel.nq]
-        vk = xk[cmodel.nv:]
+        qk = q + v * self.dt
+        vk = v + a * self.dt
+        # return ca.Function('ddqk', [q, v, f, tau], [qk, vk], ['qk', 'vk', 'conForce', 'tau'], ['qk_next', 'vk_next'])
         return ca.Function('ddqk', [q, v, u], [qk, vk], ['qk', 'vk', 'tau'], ['qk_next', 'vk_next'])
 
     def rnea(self, model, R=np.eye(3)) -> ca.Function:
@@ -173,8 +185,10 @@ class NMPC:
         # f_ext[6] = cpin.Force(f)  # End-effector is joint index 6
 
         # RNEA Function
-        tau = cpin.rnea(cmodel, cdata, q, v, a, f_ext)
-        cpin.computeRNEADerivatives(cmodel, cdata, q, v, a, f_ext)
+        # tau = cpin.rnea(cmodel, cdata, q, v, a, f_ext)
+        tau = cpin.rnea(cmodel, cdata, q, v, a)
+        # cpin.computeRNEADerivatives(cmodel, cdata, q, v, a, f_ext)
+        cpin.computeRNEADerivatives(cmodel, cdata, q, v, a)
         cpin.framesForwardKinematics(cmodel, cdata, q)
 
         # RNEA Derivatives
@@ -184,55 +198,10 @@ class NMPC:
         rneaJacobian = ca.horzcat(du_dq, du_dv, du_da)
 
         # Define f(x) model
-        rneaJac = ca.Function('jac_rnea', [q, v, a, f], [rneaJacobian])
-        return ca.Function('rnea', [q, v, a, f], [tau], ['q', 'v', 'a', 'f'], ['tau'], {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
-
-    def inverseKinematics(self, model, q0, Href, arm):
-        data = model.createData()
-        eps = 1e-6  
-        IT_MAX = 4000
-        DT = 1e-1
-        damp = 1e-12  
-        frame = arm + 'hand'
-        frame_id = model.getFrameId(frame)
-
-        q = q0.copy()  
-        i = 0  
-        while True:  
-            pin.forwardKinematics(model, data, q)
-            pin.updateFramePlacement(model, data, frame_id)  # Update frame placement  
-            iMd = data.oMf[frame_id].actInv(Href)  # Use oMf instead of oMi  
-            err = pin.log(iMd).vector  # in frame frame  
-            if norm(err) < eps:  
-                success = True  
-                break  
-            if i >= IT_MAX:  
-                success = False  
-                break  
-            J = pin.computeFrameJacobian(model, data, q, frame_id, pin.LOCAL)  # Use frame Jacobian  
-            J = -np.dot(pin.Jlog6(iMd.inverse()), J)  
-            v = -J.T.dot(solve(J.dot(J.T) + damp * np.eye(6), err))  
-            q = pin.integrate(model, q, v * DT)  
-            # if not i % 10:  
-            #     print(f"{i}: error = {err.T}")  
-            i += 1  
-      
-        if success:  
-            print("Convergence achieved!")  
-        else:  
-            print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")  
-      
-        # print(f"\nresult: {q.flatten().tolist()}")  
-        # print(f"\nfinal error: {err.T}")  
-        return q
-
-    def softFingerGrasp(self, miu=2, gamma=2) -> ca.Function:
-        f = ca.SX.sym('force', 6)
-        eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
-        eps2 = f[2]
-        eps3 = gamma * f[2] - ca.sqrt(f[3]**2 + 1e-6)
-        c_coeff = ca.vertcat(eps1, eps2, eps3)
-        return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
+        # rneaJac = ca.Function('jac_rnea', [q, v, a, f], [rneaJacobian])
+        rneaJac = ca.Function('jac_rnea', [q, v, a], [rneaJacobian])
+        # return ca.Function('rnea', [q, v, a, f], [tau], ['q', 'v', 'a', 'f'], ['tau'], {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
+        return ca.Function('rnea', [q, v, a], [tau], ['q', 'v', 'a'], ['tau'], {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
 
     def armJacobian(self, model, arm, R=np.eye(3)) -> ca.Function:
         # B.T @ Ri @ J(q) B = Identity so its omitted
@@ -321,6 +290,53 @@ class NMPC:
 
         return ca.Function('hand_jac_constraint', [qR, qL, vR, vL], [conVelArms], ['qR', 'qL', 'vR', 'vL'], ['velConstraintArms'])
 
+    def inverseKinematics(self, model, q0, Href, arm):
+        data = model.createData()
+        eps = 1e-6  
+        IT_MAX = 4000
+        DT = 1e-1
+        damp = 1e-12  
+        frame = arm + 'hand'
+        frame_id = model.getFrameId(frame)
+
+        q = q0.copy()  
+        i = 0  
+        while True:  
+            pin.forwardKinematics(model, data, q)
+            pin.updateFramePlacement(model, data, frame_id)  # Update frame placement  
+            iMd = data.oMf[frame_id].actInv(Href)  # Use oMf instead of oMi  
+            err = pin.log(iMd).vector  # in frame frame  
+            if norm(err) < eps:  
+                success = True  
+                break  
+            if i >= IT_MAX:  
+                success = False  
+                break  
+            J = pin.computeFrameJacobian(model, data, q, frame_id, pin.LOCAL)  # Use frame Jacobian  
+            J = -np.dot(pin.Jlog6(iMd.inverse()), J)  
+            v = -J.T.dot(solve(J.dot(J.T) + damp * np.eye(6), err))  
+            q = pin.integrate(model, q, v * DT)  
+            # if not i % 10:  
+            #     print(f"{i}: error = {err.T}")  
+            i += 1  
+      
+        if success:  
+            print("Convergence achieved!")  
+        else:  
+            print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")  
+      
+        # print(f"\nresult: {q.flatten().tolist()}")  
+        # print(f"\nfinal error: {err.T}")  
+        return q
+
+    def softFingerGrasp(self, miu=2, gamma=2) -> ca.Function:
+        f = ca.SX.sym('force', 6)
+        eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
+        eps2 = f[2]
+        eps3 = gamma * f[2] - ca.sqrt(f[3]**2 + 1e-6)
+        c_coeff = ca.vertcat(eps1, eps2, eps3)
+        return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
+
     def rneaSolver(self, nq):
         optimizer = ca.Opti()
         # Initialize variables
@@ -363,9 +379,8 @@ class NMPC:
         # optimizer.subject_to(self.Vo[0] == self.vObj0)
 
         for k in range(self.H):
-            # xk+1 = f(xk, uk)
-            self.F(optimizer, k)
             # h(xk, uk) = 0
+            # xk+1 = f(xk, uk)
             self.h(optimizer, k)
             # g(xk, uk) >= 0
             # self.g(optimizer, k)
@@ -373,19 +388,17 @@ class NMPC:
         optimizer.solver('ipopt', self.solverOptions)
         return optimizer
 
-    def F(self, optimizer, k) -> None:
+    def h(self, optimizer, k) -> None:
+        # Inverse dynamics constraint
         # qk, vk = self.Fk_Inverse(self.QR[k], self.VR[k], self.AR[k])
         optimizer.subject_to(self.QR[k + 1] == self.QR[k] + self.VR[k] * self.dt)
         optimizer.subject_to(self.VR[k + 1] == self.VR[k] + self.AR[k] * self.dt)
+        optimizer.subject_to(self.UR[k] == self.hk_rneaR(self.QR[k], self.VR[k], self.AR[k]))
+
         # qk, vk = self.Fk_Inverse(self.QL[k], self.VL[k], self.AL[k])
         optimizer.subject_to(self.QL[k + 1] == self.QL[k] + self.VL[k] * self.dt)
         optimizer.subject_to(self.VL[k + 1] == self.VL[k] + self.AL[k] * self.dt)
-        # optimizer.subject_to(self.Vo[k + 1] == self.objVbk(self.Vo[k], self.FR[k], self.FL[k]))
-
-    def h(self, optimizer, k) -> None:
-        # Inverse dynamics constraint
-        optimizer.subject_to(self.UR[k] == self.hk_rneaR(self.QR[k], self.VR[k], self.AR[k], self.FR[k]))
-        optimizer.subject_to(self.UL[k] == self.hk_rneaL(self.QL[k], self.VL[k], self.AL[k], self.FL[k]))
+        optimizer.subject_to(self.UL[k] == self.hk_rneaL(self.QL[k], self.VL[k], self.AL[k]))
 
         # Fundamental grasp constraint
         # optimizer.subject_to(self.G.T @ self.Vo[k] == self.hk_Jh(self.QR[k], self.QL[k], self.VR[k], self.VL[k]))
@@ -402,10 +415,10 @@ class NMPC:
         loss += 5 * (self.QL[k + 1] - self.qrefL).T @ (self.QL[k + 1] - self.qrefL)
         loss += self.VR[k + 1].T @ self.VR[k + 1]
         loss += self.VL[k + 1].T @ self.VL[k + 1]
-        loss += self.AR[k].T @ self.AR[k]
-        loss += self.AL[k].T @ self.AL[k]
         loss += (self.UR[k] - self.urefR).T @ (self.UR[k] - self.urefR)
         loss += (self.UL[k] - self.urefL).T @ (self.UL[k] - self.urefL)
+        # loss += self.FR[k].T @ self.FR[k]
+        # loss += self.FL[k].T @ self.FL[k]
         return loss
 
     def terminalCost(self, qrefR, qrefL):
@@ -421,12 +434,12 @@ class NMPC:
         self.VR.append(optimizer.variable(nq))
         self.AR.append(optimizer.variable(nq))
         self.UR.append(optimizer.variable(nq))
-        self.FR.append(optimizer.variable(6))
+        # self.FR.append(optimizer.variable(6))
         self.QL.append(optimizer.variable(nq))
         self.VL.append(optimizer.variable(nq))
         self.AL.append(optimizer.variable(nq))
         self.UL.append(optimizer.variable(nq))
-        self.FL.append(optimizer.variable(6))
+        # self.FL.append(optimizer.variable(6))
         # self.Vo.append(optimizer.variable(6))
 
     def terminalVars(self, optimizer, nq):
@@ -456,7 +469,12 @@ class NMPC:
         # Solve
         solution = self.opti.solve()
         # self.updateSolution(solution)
-        return np.squeeze(solution.value(self.UR[0])), np.squeeze(solution.value(self.UL[0])) # solution.value(self.Vo[1])
+        u_r_star = np.squeeze(solution.value(self.UR[0]))
+        # f_r_star = np.squeeze(solution.value(self.FR[0]))
+        u_l_star = np.squeeze(solution.value(self.UL[0])) 
+        # f_l_star = np.squeeze(solution.value(self.FL[0]))
+        # return u_r_star, f_r_star, u_l_star, f_l_star
+        return u_r_star, u_l_star
 
 """ Warm Start
     def set_initial(self, optimizer) -> None:

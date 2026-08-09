@@ -2,7 +2,7 @@ import sys
 import os
 import casadi as ca
 from utils import *
-from nmpcArm import armNMPC
+from nmpcParArm import armNMPC
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin

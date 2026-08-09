@@ -1,7 +1,41 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import casadi as ca
 from mpl_toolkits.mplot3d import Axes3D
+
+def savePlot(label):
+    path = os.getcwd()
+    path = path + '/../plots/'
+    path_img = path + label + '.png'
+    plt.savefig(
+        path_img,
+        # dpi=300,                # Resolution (dots per inch)
+        # bbox_inches='tight',    # Remove extra whitespace
+        # pad_inches=0.1,         # Padding around the plot
+        transparent=False,      # Transparent background
+    )
+    plt.close()
+
+def plotErr(data):
+    x = data['x']
+    t = data['t']
+    title = data['title']
+    xl = data['xlabel']
+    yl = data['ylabel']
+
+    N = len(x)
+    t = t[:N]
+
+    X = np.array(x)
+
+    plt.figure()
+    plt.plot(t, X)
+    plt.title(title)
+    plt.ylabel(yl)
+    plt.xlabel(xl)
+    plt.show()
+    savePlot(title)
 
 def plotTraj(data):
     x = data['x']
@@ -24,6 +58,7 @@ def plotTraj(data):
     plt.ylabel(yl)
     plt.xlabel(xl)
     plt.show()
+    savePlot(title)
 
 
 def plot3D(data):
@@ -78,6 +113,7 @@ def plot3D(data):
 
     plt.tight_layout()
     plt.show()
+    savePlot(title)
 
 def axisAdder(ax, x, y, z, xl, colors={'line': 'blue',
                                        'start': 'green',
@@ -131,3 +167,12 @@ def plotCoordinateFrame(axis, T_0f, size=1, linewidth=3, name=None):
 
     if name is not None:
         axis.text(X[0,0],X[0,1],X[0,2], name, zdir='x')
+
+def saveData(data):
+    path = data['path']
+    extract_Data = {
+            'p_r' : p_r,
+            'x_r' : x_r,
+            'u_r' : u_r
+            }
+    savemat('output.mat', extract_Data)
