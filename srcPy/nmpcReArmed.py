@@ -15,6 +15,25 @@ class armNMPC:
         for arm in armParameters:
             self.models.append(self.getArmModel(arm))
 
+        self.datas = []
+        for model in self.models:
+            self.datas.append(model.createData())
+
+        self.nq = self.models[0].nq
+        self.nv = self.models[0].nv
+        self.na = self.nq
+        self.nu = self.na
+        self.nx = self.nq + self.nv
+
+        # Restrained velocity
+        self.nJ = 3
+
+        # Model Dynamics
+        self.dt = Ts
+        self.H = ocpParameters['H']
+        self.Fk_Forward_r = self.forwardModel(self.models[0])
+        self.Fk_Forward_l = self.forwardModel(self.models[1])
+
         # Solver Initialization
         self.optimizer = ca.Opti()
         self.solverOptions = {
@@ -126,9 +145,8 @@ class armNMPC:
         qk = q + self.dt * v
         vk = v + self.dt * a
         xk = ca.vertcat(qk, vk)
-        Fk_Inverse = ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
 
-        return Fk_Inverse
+        return ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
 
     def rnea(self, model):
         cmodel = cpin.Model(model)
@@ -290,10 +308,10 @@ class armNMPC:
         self.optimizer.subject_to(self.Xr[0] == self.x0r)
         self.optimizer.subject_to(self.Xl[0] == self.x0l)
         for k in range(H):
-            self.optimizer.subject_to(self.Xr[k+1] == self.Fk_Inverse(self.Xr[k], self.Ar[k]))
+            self.optimizer.subject_to(self.Xr[k+1] == self.inverseModel(self.nq)(self.Xr[k], self.Ar[k]))
             self.optimizer.subject_to(self.Ur[k] == self.rnea(self.models[0])(self.Xr[k], self.Ar[k]))
 
-            self.optimizer.subject_to(self.Xl[k+1] == self.Fk_Inverse(self.Xl[k], self.Al[k]))
+            self.optimizer.subject_to(self.Xl[k+1] == self.inverseModel(self.nq)(self.Xl[k], self.Al[k]))
             self.optimizer.subject_to(self.Ul[k] == self.rnea(self.models[1])(self.Xl[k], self.Al[k]))
 
             err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
