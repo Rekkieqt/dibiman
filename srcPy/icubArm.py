@@ -13,7 +13,7 @@ def main():
     """ Option structs """
     dt = 0.05
     ocpParams = {
-            'H': 50,
+            'H': 250,
             'r': 1,
             'q': 7
             }
@@ -30,24 +30,6 @@ def main():
     Control Loop
     """
     model, data = icubCtrler.pinModelandData()
-    with open('rightArmData.txt', 'w+') as f:
-        # Joints with their names
-        f.write("JOINTS:\n")
-        for i in range(model.njoints):
-            f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
-        
-        # Frames with details
-        f.write("\nFRAMES:\n")
-        for i in range(model.nframes):
-            frame = model.frames[i]
-            f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
-            f.write(f"  {i}: {frame.placement}\n")
-    f.close()
-
-    contactFrame = pin.SE3(
-            np.eye(3),
-            np.ones((3, ))
-            )
 
     nv = model.nv
     nq = model.nq
@@ -92,14 +74,7 @@ def main():
     v = [None] * (N + 1)
     v = [xi[-nv:] for xi in x]
 
-    # Printing last result and references
-    # print('States, last measured vs ref')
-    # print(x[-1])
-    # print(xref)
-    # print('Torques, last measured vs ref')
-    # print(u[-1])
-    # print(uref)
-
+    sys.exit()
     # --------------PLOTS-----------
     try:
         import matplotlib.pyplot as plt

@@ -4,15 +4,15 @@ import os
 import casadi as ca
 from mpl_toolkits.mplot3d import Axes3D
 
-def savePlot(label):
+def savePlot(fig, label):
     path = os.getcwd()
     path = path + '/../plots/'
     path_img = path + label + '.png'
-    plt.savefig(
+    fig.savefig(
         path_img,
-        # dpi=300,                # Resolution (dots per inch)
-        # bbox_inches='tight',    # Remove extra whitespace
-        # pad_inches=0.1,         # Padding around the plot
+        dpi=300,                # Resolution (dots per inch)
+        bbox_inches='tight',    # Remove extra whitespace
+        pad_inches=0.1,         # Padding around the plot
         transparent=False,      # Transparent background
     )
     plt.close()
@@ -29,13 +29,13 @@ def plotErr(data):
 
     X = np.array(x)
 
-    plt.figure()
+    fig = plt.figure()
     plt.plot(t, X)
     plt.title(title)
     plt.ylabel(yl)
     plt.xlabel(xl)
     plt.show()
-    savePlot(title)
+    savePlot(fig, title)
 
 def plotTraj(data):
     x = data['x']
@@ -51,14 +51,14 @@ def plotTraj(data):
     X = np.array(x)
     Xref = np.tile(xref[:, np.newaxis], (1, N))
 
-    plt.figure()
+    fig = plt.figure()
     plt.plot(t, X)
     plt.plot(t, Xref.T, '--')
     plt.title(title)
     plt.ylabel(yl)
     plt.xlabel(xl)
     plt.show()
-    savePlot(title)
+    savePlot(fig, title)
 
 
 def plot3D(data):
@@ -113,7 +113,7 @@ def plot3D(data):
 
     plt.tight_layout()
     plt.show()
-    savePlot(title)
+    savePlot(fig, title)
 
 def axisAdder(ax, x, y, z, xl, colors={'line': 'blue',
                                        'start': 'green',

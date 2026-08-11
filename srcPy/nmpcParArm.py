@@ -35,14 +35,14 @@ class armNMPC:
                 'expand': True,
                 # 'debug': True,
                 # 'ipopt.warm_start_init_point': True,
-                'jit': True,
+                # 'jit': True,
                 # 'jit_options': {'flags': '-O2', 'verbose': False},
                 # 'fatrop.print_level': 0,
                 # 'fatrop.tolerance': 1e-3,
                 # 'fatrop.max_iter': 200
                 # 'structure_detection': 'auto'
                 # 'ipopt.hessian_approximation': 'limited-memory',
-                # 'ipopt.print_level': 0,
+                'ipopt.print_level': 0,
                 # 'ipopt.tol': 1e-3
                 }
         if method == 'inverse':
@@ -111,8 +111,8 @@ class armNMPC:
         # eps_rnea = InvDyn - u
         eps = ca.vertcat(xk, InvDyn)
 
-        # hblock = ca.Function('h_block', [x, a], [eps], ['x', 'a'], ['eps']).expand()
-        hblock = ca.Function('h_block', [x, a], [xk, InvDyn], ['x', 'a'], ['x_next', 'tau']).expand()
+        hblock = ca.Function('h_block', [x, a], [eps], ['x', 'a'], ['eps']).expand()
+        # hblock = ca.Function('h_block', [x, a], [xk, InvDyn], ['x', 'a'], ['x_next', 'tau']).expand()
         return hblock
 
     def forwardModel(self, cmodel, cdata):
@@ -151,6 +151,7 @@ class armNMPC:
         # self.Fk = integrator(dx_f, modOpts)
 
     def rneaSolver(self, params) -> None:
+        print('Parallel Solver')
         r = params['r']
         q = params['q']
         H = params['H']
@@ -180,17 +181,17 @@ class armNMPC:
         self.optimizer.subject_to(self.X[0] == self.x0)
         allX_next = ca.horzcat(*self.X[1:H + 1])
         allX_k = ca.horzcat(*self.X[0:H])
-        allA = ca.horzcat(*self.A[0:H])
+        allA = ca.horzcat(*self.A)
         allU = ca.horzcat(*self.U)
 
-        f_map = self.hblock.map(self.H, 'thread', 6)
+        f_map = self.hblock.map(self.H, 'openmp')
         eps_all = f_map(allX_k, allA)
-        x_next_all, rnea_all = f_map(allX_k, allA)
+        h_2 = ca.vertcat(allX_next, allU)
+        self.optimizer.subject_to(eps_all == h_2)
+        # x_next_all, rnea_all = f_map(allX_k, allA)
         # h_1 = ca.vertcat(x_next_all, rnea_all)
-        # h_2 = ca.vertcat(allX_next, allU)
-        # self.optimizer.subject_to(eps_all == h_2)
-        self.optimizer.subject_to(x_next_all - allX_next == 0)
-        self.optimizer.subject_to(rnea_all - allU == 0)
+        # self.optimizer.subject_to(x_next_all - allX_next == 0)
+        # self.optimizer.subject_to(rnea_all - allU == 0)
 
         self.optimizer.solver('ipopt', self.solverOptions)
 

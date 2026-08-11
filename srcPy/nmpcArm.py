@@ -39,9 +39,9 @@ class armNMPC:
                 # 'fatrop.print_level': 0,
                 # 'fatrop.tolerance': 1e-3,
                 # 'fatrop.max_iter': 200
-                'structure_detection': 'auto'
+                # 'structure_detection': 'auto'
                 # 'ipopt.hessian_approximation': 'limited-memory',
-                # 'ipopt.print_level': 0,
+                'ipopt.print_level': 0,
                 # 'ipopt.tol': 1e-3
                 }
         if method == 'inverse':
@@ -149,6 +149,7 @@ class armNMPC:
         # self.Fk = integrator(dx_f, modOpts)
 
     def rneaSolver(self, params) -> None:
+        print('Serial Solver')
         r = params['r']
         q = params['q']
         H = params['H']
@@ -181,7 +182,7 @@ class armNMPC:
             self.optimizer.subject_to(self.X[k+1] == self.Fk_Inverse(self.X[k], self.A[k]))
             self.optimizer.subject_to(self.U[k] == self.hk_rnea(self.X[k], self.A[k]))
 
-        self.optimizer.solver('fatrop', self.solverOptions)
+        self.optimizer.solver('ipopt', self.solverOptions)
 
     def solverVariablesInit(self) -> None:
         self.x0 = self.optimizer.parameter(self.nx, )

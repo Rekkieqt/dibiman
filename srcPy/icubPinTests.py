@@ -30,18 +30,19 @@ def main():
     Control Loop
     """
     model, data = icubCtrler.pinModelandData()
-    with open('leftArmData.txt', 'w+') as f:
-        # Joints with their names
-        f.write("JOINTS:\n")
-        for i in range(model.njoints):
-            f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
-        
-        # Frames with details
-        f.write("\nFRAMES:\n")
-        for i in range(model.nframes):
-            frame = model.frames[i]
-            f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
-    f.close()
+    """ Print Arm Model Data """
+    # with open('leftArmData.txt', 'w+') as f:
+    #     # Joints with their names
+    #     f.write("JOINTS:\n")
+    #     for i in range(model.njoints):
+    #         f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
+    #     
+    #     # Frames with details
+    #     f.write("\nFRAMES:\n")
+    #     for i in range(model.nframes):
+    #         frame = model.frames[i]
+    #         f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
+    # f.close()
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
 
@@ -61,6 +62,17 @@ def main():
     du_da = cdata.M
 
     hk_rnea = ca.Function('RNEA', [q, v, a, f_ee], [tau], ['q', 'v', 'a', 'f_ee'], ['tau'])
+
+    q_i = pin.neutral(model)
+    pin.forwardKinematics(model, data, q_i)
+    pin.updateFramePlacements(model, data)
+    hand_str = armParams['arm'] + 'hand'
+    hand_id = model.getFrameId(hand_str)
+
+    RcLeft = data.oMf[hand_id].rotation
+    print(RcLeft)
+    object_H = pin.SE3(RcLeft.T, p_l_to_obj)
+    ObjectFrame = pin.Frame('l_hand_to_object', model.frames[hand_id].parentJoint, hand_id, )
 
 
 if __name__ == "__main__":

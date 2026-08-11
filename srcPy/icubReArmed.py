@@ -42,6 +42,7 @@ def main():
 
     """
     Initial Configuration
+
     """
 
     # Hand Ids
@@ -63,21 +64,74 @@ def main():
     Ree_l = iBee.datas[1].oMf[leftHandID].rotation.copy()
     p_l_arm = iBee.datas[1].oMf[leftHandID].translation.copy()
     
-    # Desired arms location
-    p_r_arm_ref = p_r_arm + np.array([0, 0, 0.01])
-    p_l_arm_ref = p_l_arm + np.array([0, 0, 0.01])
+    """
+    Object Parameters (test)
 
-    Hf_r = pin.SE3(Ree_r, p_r_arm_ref)
-    qf_r = iBee.inverseKinematics(iBee.models[0], qi_r, p_r_arm_ref, right, target='pos')
-    xf_r = np.concatenate((qf_r, vi_r), axis=0)
+    """
+    p_w_o = .5 * (p_r_arm + p_l_arm)
+    object_frame = pin.SE3(np.eye(3), p_w_o)
+
+    # SE(3) l_hand -> object c.o.m.
+    r_hand_to_obj_H = iBee.datas[0].oMi[6].inverse() * object_frame
+    r_hand_to_obj_frame = pin.Frame('r_hand_to_obj',
+                                    iBee.models[0].frames[rightHandID].parentJoint,
+                                    rightHandID,
+                                    r_hand_to_obj_H,
+                                    pin.FrameType.OP_FRAME
+                                    )
+    iBee.models[0].addFrame(r_hand_to_obj_frame)
+    rightObjectID = iBee.models[0].getFrameId('r_hand_to_obj')
+
+    # SE(3) l_hand -> object c.o.m.
+    l_hand_to_obj_H = iBee.datas[1].oMi[6].inverse() * object_frame
+    l_hand_to_obj_frame = pin.Frame('l_hand_to_obj',
+                                    iBee.models[1].frames[leftHandID].parentJoint,
+                                    leftHandID,
+                                    l_hand_to_obj_H,
+                                    pin.FrameType.OP_FRAME
+                                    )
+    iBee.models[1].addFrame(l_hand_to_obj_frame)
+    leftObjectID = iBee.models[1].getFrameId('l_hand_to_obj')
+
+    iBee.createDatas()
+    pin.forwardKinematics(iBee.models[0], iBee.datas[0], qi_r)
+    pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
+    pin.forwardKinematics(iBee.models[1], iBee.datas[1], qi_l)
+    pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
+    iBee.setFrameIDs(rightObjectID, leftObjectID)
+
+    """
+    Inverse Kinematics - Joint Reference and Torque Stationarity
+
+    """
+    p_r_arm_ref = p_r_arm + np.array([0, 0.05, 0.05])
+    p_l_arm_ref = p_l_arm + np.array([0, 0.05, 0.05])
+
+    p_w_obj_ref = iBee.datas[0].oMf[rightObjectID].translation + np.array([0.0, 0.0, 0.01])
+    rpy = np.array([0, np.pi/20, 0])
+    p_R_obj_ref = iBee.datas[0].oMf[rightObjectID].rotation @ pin.rpy.rpyToMatrix(rpy)
+    H_obj_ref = pin.SE3(p_R_obj_ref, p_w_obj_ref)
+    print(H_obj_ref.translation)
+    target = 'pos'
+
+    qf_r = iBee.inverseKinematics(iBee.models[0], qi_r, H_obj_ref, rightObjectID, target=target)
     print(qf_r)
+    xf_r = np.concatenate((qf_r, vi_r), axis=0)
     tau_r_ref = pin.rnea(iBee.models[0], iBee.datas[0], qf_r, vi_r, vi_r)
 
-    Hf_l = pin.SE3(Ree_l, p_l_arm_ref)
-    qf_l = iBee.inverseKinematics(iBee.models[1], qi_l, p_l_arm_ref, left, target='pos')
-    xf_l = np.concatenate((qf_l, vi_l), axis=0)
+    qf_l = iBee.inverseKinematics(iBee.models[1], qi_l, H_obj_ref, leftObjectID, target=target)
     print(qf_l)
+    xf_l = np.concatenate((qf_l, vi_l), axis=0)
     tau_l_ref = pin.rnea(iBee.models[1], iBee.datas[1], qf_l, vi_l, vi_l)
+
+    pin.forwardKinematics(iBee.models[0], iBee.datas[0], qf_r)
+    pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
+    print(iBee.datas[0].oMf[rightObjectID])
+
+
+    pin.forwardKinematics(iBee.models[1], iBee.datas[1], qf_l)
+    pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
+    print(iBee.datas[1].oMf[leftObjectID])
 
     """
     Simulation variables
@@ -108,8 +162,8 @@ def main():
     f_r = [None] * N
 
     # Spatial twist (w.r.t. WORLD)
-    twist_r = np.zeros((6, N + 1))
-    twist_l = np.zeros((6, N + 1))
+    twist_r = [None] * (N + 1)
+    twist_l = [None] * (N + 1)
 
     # Arm vectors
     p_r = np.zeros((3, N + 1))
@@ -128,11 +182,12 @@ def main():
     v_r[0] = vi_r
     v_l[0] = vi_l
 
-    for i in range(N):
+    twist_r[0] = vi_r
+    twist_l[0] = vi_l
 
+    for i in range(N):
         # Solve OCP
         try:
-            # u_r[i], f_r[i], u_l[i], f_l[i] = iBee.solve(q_r[i], q_l[i], v_r[i], v_l[i], qf_r, qf_l, tau_r_ref, tau_l_ref)
             u_r[i], u_l[i] = iBee.solve(x_r[i], x_l[i], xf_r, xf_l, tau_r_ref, tau_l_ref)
 
         except Exception as e:
@@ -148,17 +203,34 @@ def main():
         v_r[i + 1] = x_r[i + 1][nq:].copy()
         v_l[i + 1] = x_l[i + 1][nq:].copy()
 
-        # Update placements
+        # Update frame velocities and placements
         pin.forwardKinematics(iBee.models[0], iBee.datas[0], x_r[i + 1][:nq], x_r[i + 1][nq:])
-        twist_r[:, i + 1] = pin.getFrameVelocity(iBee.models[0], iBee.datas[0], rightHandID, pin.WORLD)
+        twist_r[i + 1] = pin.getFrameVelocity(iBee.models[0], iBee.datas[0], rightHandID, pin.WORLD)
         pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
         p_r[:, i + 1] = iBee.datas[0].oMf[rightHandID].translation.copy()
 
         pin.forwardKinematics(iBee.models[1], iBee.datas[1], x_l[i + 1][:nq], x_l[i + 1][nq:])
-        twist_l[:, i + 1] = pin.getFrameVelocity(iBee.models[1], iBee.datas[1], leftHandID, pin.WORLD)
+        twist_l[i + 1] = pin.getFrameVelocity(iBee.models[1], iBee.datas[1], leftHandID, pin.WORLD)
         pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
         p_l[:, i + 1] = iBee.datas[1].oMf[leftHandID].translation.copy()
 
+    try:
+        wrench_r, wrench_l = iBee.objForceSolver(objParams) 
+    except Exception as e:
+        raise
+
+    print(f'right wrench :{wrench_r}')
+    print(f'left wrench :{wrench_l}')
+
+    print(f'right q :{q_r[-1]}')
+    print(f'left q :{q_l[-1]}')
+    print(f'right q_ref :{qf_r}')
+    print(f'left q_ref :{qf_l}')
+    print(f'right p :{p_r[:, -1]}')
+    print(f'left p :{p_l[:, -1]}')
+    print(f'right p_ref :{p_r_arm_ref}')
+    print(f'left p_ref :{p_l_arm_ref}')
+    print(f'Distance in the end {np.linalg.norm(p_r[:, -1] - p_l[:, -1])}')
 
     # --------------PLOTS-----------
     try:
@@ -226,14 +298,6 @@ def main():
             'title': 'End-Effector Distance during trajectory'
             })
 
-        plotErr({
-            'x':np.linalg.norm(twist_r - twist_l, axis=0),
-            't':t,
-            'xlabel': 'Time [s]',
-            'ylabel': 'Euclidian l2 norm of the difference of spatial twists left and right',
-            'title': 'End-Effector Difference between spatial twists'
-            })
-
         color_scheme_r = {
             'line': 'teal',
             'start': 'limegreen',
@@ -254,12 +318,31 @@ def main():
             'frames': None
             })
 
-        plot3D({
-            'x':[twist_r, twist_l],
-            'xlabel': ['Right Arm Twist', 'Left Arm Twist'],
-            'title': 'iCub Arms Twists',
-            'colors': [color_scheme_r, color_scheme_l],
-            'frames': None
+        plotTraj({
+            'x':twist_r,
+            'xref':vi_r,
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Twist Velocities',
+            'title': 'Right End-Effector Velocities'
+            })
+
+        plotTraj({
+            'x':twist_l,
+            'xref':vi_r,
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Twist Velocities',
+            'title': 'Left End-Effector Velocities'
+            })
+
+        plotTraj({
+            'x':np.vstack((wrench_r, wrench_l)),
+            'xref':vi_r,
+            't':t,
+            'xlabel': 'Time [s]',
+            'ylabel': 'Spatial Wrenches (right, left)',
+            'title': 'Forces applied at the End-Effectors'
             })
 
     except ImportError as err:

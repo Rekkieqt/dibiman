@@ -15,10 +15,7 @@ class armNMPC:
         for arm in armParameters:
             self.models.append(self.getArmModel(arm))
 
-        self.datas = []
-        for model in self.models:
-            self.datas.append(model.createData())
-
+        self.createDatas()
         self.nq = self.models[0].nq
         self.nv = self.models[0].nv
         self.na = self.nq
@@ -26,7 +23,11 @@ class armNMPC:
         self.nx = self.nq + self.nv
 
         # Restrained velocity
-        self.nJ = 3
+        self.nJ = 6
+
+        # Jacobian Frame IDs
+        self.rightFrameId = self.models[0].getFrameId('r_hand')
+        self.leftFrameId = self.models[1].getFrameId('l_hand')
 
         # Model Dynamics
         self.dt = Ts
@@ -73,8 +74,15 @@ class armNMPC:
         initConf = np.zeros([len(allJoints) - 1, 1])
         model = pin.buildReducedModel(fullModel, jointsToLockIDs, initConf)
         data = model.createData()
-
         return model
+
+    def createDatas(self) -> None:
+        self.datas = []
+        for model in self.models:
+            self.datas.append(model.createData())
+    def setFrameIDs(self, rightFrameId, leftFrameId) -> None:
+        self.rightFrameId = rightFrameId
+        self.leftFrameId = leftFrameId
 
     def objectDynamics(self, params) -> ca.Function:
         """
@@ -82,7 +90,9 @@ class armNMPC:
         """
         model = pin.buildModelFromUrdf(params['path'], pin.JointModelFreeFlyer())
         data = model.createData()
-        inertias = model.inertias[0]
+        # for i in range(model.njoints):
+        #     print(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
+        inertias = model.inertias[1]
         R = ca.DM.eye(3) # Rotation matrix of the body to the inertial/world frame
         I = inertias.inertia # Inertia tensor 3x3
         m = inertias.mass # Object Mass
@@ -124,15 +134,21 @@ class armNMPC:
         # V0 = ca.SX.sym('Vk', 6)
         # Vk = V0 + dV * self.dt
         # return ca.Function('Jh', [V0, f1, f2], [Vk], ['v0', 'f1', 'f2'], ['Vk'])
-
         return ca.Function('ObjDynEq', [twist, f1, f2], [dV], ['vel', 'f1', 'f2'], ['acc'])
+
+    def softFingerGrasp(self, miu=2, gamma=2) -> ca.Function:
+        f = ca.SX.sym('force', 6)
+        eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
+        eps2 = f[2]
+        eps3 = gamma * f[2] - ca.sqrt(f[3]**2 + 1e-6)
+        c_coeff = ca.vertcat(eps1, eps2, eps3)
+        return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
 
     def inverseModel(self, nq):
         """
         Acceleration and Torque as inputs to the system
 
         """
-
         # Dynamic variables
         q = ca.SX.sym("q", nq)
         v = ca.SX.sym("v", nq)
@@ -145,7 +161,6 @@ class armNMPC:
         qk = q + self.dt * v
         vk = v + self.dt * a
         xk = ca.vertcat(qk, vk)
-
         return ca.Function('Fk', [x, a], [xk], ['x', 'a'], ['xk']).expand()
 
     def rnea(self, model):
@@ -173,11 +188,9 @@ class armNMPC:
 
         hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'],
                                    {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
-
         return hk_rnea
 
     def forwardModel(self, model):
-
         cmodel = cpin.Model(model)
         cdata = cmodel.createData()
 
@@ -215,7 +228,7 @@ class armNMPC:
         return ca.Function('Fk', [x, u], [xk], ['x0', 'u'], ['xf']).expand()
         # self.Fk = integrator(dx_f, modOpts)
 
-    def armJacobian(self, model, arm) -> ca.Function:
+    def armJacobian(self, model, frameID) -> ca.Function:
         # B.T @ Ri @ J(q) B = Identity so its omitted
         cmodel = cpin.Model(model)
         cdata = cmodel.createData()
@@ -223,8 +236,8 @@ class armNMPC:
         q = ca.SX.sym('q', cmodel.nq)
         v = ca.SX.sym('v', cmodel.nv)
 
-        frame = arm + 'hand'
-        frameID = cmodel.getFrameId(frame)
+        # frame = arm + 'hand'
+        # frameID = cmodel.getFrameId(frame)
 
         J = cpin.computeFrameJacobian(cmodel, cdata, q, frameID, pin.WORLD)
 
@@ -232,35 +245,44 @@ class armNMPC:
         lin_vel = dx[0:3]
         x = ca.vertcat(q, v)
         # return ca.Function('J_obj', [q], [J_custom], ['q'], ['Jac'])
-        return ca.Function('J_obj', [x], [lin_vel], ['x'], ['spatial_vel'])
+        return ca.Function('J_obj', [x], [dx], ['x'], ['spatial_vel'])
 
     def objForceSolver(self, objectParams, T=1) -> None:
         opti = ca.Opti()
         objDynamics = self.objectDynamics(objectParams)
+        frictCone = self.softFingerGrasp()
+        twist0 = np.ones((6, ))
+        h1 = np.ones((6, ))
+        h2 = np.ones((6, ))
 
         H = int(T/self.dt)
 
         F1 = []
         F2 = []
-        twistV = ca.DM.zeros((6, ))
+        twistV = opti.parameter(6)
         for k in range(H):
             F1.append(opti.variable(6))
             F2.append(opti.variable(6))
-        
+
         obj = 0
         for i in range(H):
-            obj += sumsqr(F1[i])
-            obj += sumsqr(F2[i])
+            obj += ca.sumsqr(F1[i])
+            obj += ca.sumsqr(F2[i])
 
         opti.minimize(obj)
 
         # Subject to the model/ descrete function
         for k in range(H):
             opti.subject_to(objDynamics(twistV, F1[k], F2[k]) == 0)
+            opti.subject_to(frictCone(F1[k]) >= 0)
+            opti.subject_to(frictCone(F2[k]) >= 0)
 
+        opti.solver('ipopt', self.solverOptions)
+        opti.set_value(twistV, np.zeros((6, )))
+        
         solution = opti.solve()
-        F1_star = np.squeeze(solution.value(F1))
-        F2_star = np.squeeze(solution.value(F2))
+        F1_star = np.squeeze(solution.value(F1[-1]))
+        F2_star = np.squeeze(solution.value(F2[-1]))
         
         return F1_star, F2_star
 
@@ -277,7 +299,7 @@ class armNMPC:
             self.Xl.append(self.optimizer.variable(self.nx))
             self.Ul.append(self.optimizer.variable(self.nu))
             self.Al.append(self.optimizer.variable(self.na))
-            self.S.append(self.optimizer.variable(self.nJ))
+            # self.S.append(self.optimizer.variable(self.nJ))
         self.Xr.append(self.optimizer.variable(self.nx))
         self.Xl.append(self.optimizer.variable(self.nx))
         
@@ -296,7 +318,7 @@ class armNMPC:
             obj += ca.mtimes([(self.Ul[i] - self.urfl).T, R, self.Ul[i] - self.urfl])
             obj += ca.mtimes([(self.Al[i]).T, Qa, self.Al[i]])
 
-            obj += 10000 * ca.sumsqr(self.S[i])
+            # obj += 10000 * ca.sumsqr(self.S[i])
 
             # err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
             # obj += 50 * err.T @ err
@@ -308,14 +330,15 @@ class armNMPC:
         self.optimizer.subject_to(self.Xr[0] == self.x0r)
         self.optimizer.subject_to(self.Xl[0] == self.x0l)
         for k in range(H):
-            self.optimizer.subject_to(self.Xr[k+1] == self.inverseModel(self.nq)(self.Xr[k], self.Ar[k]))
+            self.optimizer.subject_to(self.Xr[k + 1] == self.inverseModel(self.nq)(self.Xr[k], self.Ar[k]))
             self.optimizer.subject_to(self.Ur[k] == self.rnea(self.models[0])(self.Xr[k], self.Ar[k]))
 
-            self.optimizer.subject_to(self.Xl[k+1] == self.inverseModel(self.nq)(self.Xl[k], self.Al[k]))
+            self.optimizer.subject_to(self.Xl[k + 1] == self.inverseModel(self.nq)(self.Xl[k], self.Al[k]))
             self.optimizer.subject_to(self.Ul[k] == self.rnea(self.models[1])(self.Xl[k], self.Al[k]))
 
-            err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
-            self.optimizer.subject_to(err - self.S[k] <= 0)
+            err = self.armJacobian(self.models[0], self.rightFrameId)(self.Xr[k + 1]) - self.armJacobian(self.models[1], self.leftFrameId)(self.Xl[k + 1])
+            self.optimizer.subject_to(err == 0)
+            # self.optimizer.subject_to(err - self.S[k] <= 0)
 
         self.optimizer.solver('ipopt', self.solverOptions)
 
@@ -337,10 +360,6 @@ class armNMPC:
         self.Ainit = [np.zeros((self.na, )) for _ in range(self.H)]
         self.Uinit = [np.zeros((self.nu, )) for _ in range(self.H)]
         self.S = []
-
-    def cost_function(self, x, xref, w):
-        loss = w * (x - xref).T @ (x - xref)
-        return loss
 
     def set_initial(self) -> None:
         for k in range(self.H):
@@ -366,29 +385,23 @@ class armNMPC:
         # self.updateSolution(solution)
         u_r_star = np.squeeze(solution.value(self.Ur[0]))
         u_l_star = np.squeeze(solution.value(self.Ul[0]))
+        # f_cost = solution.value(self.optimizer.f())
+        # print(f'Cost Eval {f_cost}')
         return u_r_star, u_l_star
 
-    def updateSolution(self, solution) -> None:
-        for k in range(self.H):
-            self.Xinit[k + 1] = np.squeeze(solution.value(self.X[k]))
-            self.Uinit[k] = np.squeeze(solution.value(self.U[k]))
-            self.Ainit[k] = np.squeeze(solution.value(self.A[k]))
-
-    def inverseKinematics(self, model, q0, Href, arm, target='full'):
+    def inverseKinematics(self, model, q0, Href, frame_id, target='full'):
         data = model.createData()
         eps = 1e-6  
         IT_MAX = 4000
         DT = 1e-1
         damp = 1e-12  
-        frame = arm + 'hand'
-        frame_id = model.getFrameId(frame)
 
         q = q0.copy()  
         i = 0  
         while True:  
             pin.forwardKinematics(model, data, q)
             pin.updateFramePlacement(model, data, frame_id)  # Update frame placement  
-            if target is 'full':
+            if target == 'full':
                 iMd = data.oMf[frame_id].actInv(Href)  # Use oMf instead of oMi  
                 err = pin.log(iMd).vector  # in frame frame  
                 J = pin.computeFrameJacobian(model, data, q, frame_id, pin.LOCAL)  # Use frame Jacobian  
@@ -398,7 +411,7 @@ class armNMPC:
                 # if not i % 10:  
                 #     print(f"{i}: error = {err.T}")  
             else:
-                err = data.oMf[frame_id].translation - Href
+                err = data.oMf[frame_id].translation - Href.translation
                 J = pin.computeFrameJacobian(model, data, q, frame_id, pin.LOCAL_WORLD_ALIGNED)[:3, :]
                 v = -J.T.dot(solve(J.dot(J.T) + damp * np.eye(3), err))  
                 q = pin.integrate(model, q, v * DT)  
@@ -413,10 +426,25 @@ class armNMPC:
             i += 1  
       
         if success:  
-            print(f"Convergence achieved for {frame}!")  
+            print(f"Convergence achieved for {model.frames[frame_id].name}!")  
         else:  
-            print(f"\nWarning: the iterative algorithm has not reached convergence to the desired precision {frame}")  
+            print(f"\nWarning: the iterative algorithm has not reached convergence to the desired precision {model.frames[frame_id].name}")  
       
         # print(f"\nresult: {q.flatten().tolist()}")  
         # print(f"\nfinal error: {err.T}")  
         return q
+
+    def eeFrameToObjFrame(self, model) -> None:
+        rpyLeftArm = np.array([-np.pi, 0, 0])
+        RcLeft = pin.rpy.rpyToMatrix(rpyLeftArm)
+        pcLeft = .5 * (p_r + p_l)
+
+        RcRight = regular
+        pcRight = pcLeft
+
+    def updateSolution(self, solution) -> None:
+        for k in range(self.H):
+            self.Xinit[k + 1] = np.squeeze(solution.value(self.X[k]))
+            self.Uinit[k] = np.squeeze(solution.value(self.U[k]))
+            self.Ainit[k] = np.squeeze(solution.value(self.A[k]))
+
