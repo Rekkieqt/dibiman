@@ -15,6 +15,8 @@ def main():
     """ Option structs """
     left = 'l_'
     right = 'r_'
+    sev_dof = ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch', 'wrist_yaw']
+    six_dof = sev_dof[:5]
     dt = 0.05
     ocpParams = {
             'r' : 1,
@@ -25,7 +27,7 @@ def main():
 
     rightArm = {
             "path": os.getcwd() + '/../conf/model.urdf',
-            "joints": ['shoulder_pitch', 'shoulder_roll', 'shoulder_yaw', 'elbow', 'wrist_prosup', 'wrist_pitch'], # r_wrist_yaw
+            "joints": sev_dof,
             "prefix": right
             }
     leftArm = copy.deepcopy(rightArm)
@@ -72,7 +74,8 @@ def main():
     object_frame = pin.SE3(np.eye(3), p_w_o)
 
     # SE(3) l_hand -> object c.o.m.
-    r_hand_to_obj_H = iBee.datas[0].oMi[6].inverse() * object_frame
+    last_joint_r = iBee.models[1].njoints - 1 
+    r_hand_to_obj_H = iBee.datas[0].oMi[last_joint_r].inverse() * object_frame
     r_hand_to_obj_frame = pin.Frame('r_hand_to_obj',
                                     iBee.models[0].frames[rightHandID].parentJoint,
                                     rightHandID,
@@ -83,7 +86,8 @@ def main():
     rightObjectID = iBee.models[0].getFrameId('r_hand_to_obj')
 
     # SE(3) l_hand -> object c.o.m.
-    l_hand_to_obj_H = iBee.datas[1].oMi[6].inverse() * object_frame
+    last_joint_l = iBee.models[1].njoints - 1 
+    l_hand_to_obj_H = iBee.datas[1].oMi[last_joint_l].inverse() * object_frame
     l_hand_to_obj_frame = pin.Frame('l_hand_to_obj',
                                     iBee.models[1].frames[leftHandID].parentJoint,
                                     leftHandID,
@@ -104,15 +108,14 @@ def main():
     Inverse Kinematics - Joint Reference and Torque Stationarity
 
     """
-    p_r_arm_ref = p_r_arm + np.array([0, 0.05, 0.05])
-    p_l_arm_ref = p_l_arm + np.array([0, 0.05, 0.05])
+    print('Initial Distance:')
+    print(np.linalg.norm(p_r_arm - p_l_arm))
 
-    p_w_obj_ref = iBee.datas[0].oMf[rightObjectID].translation + np.array([0.0, 0.0, 0.01])
-    rpy = np.array([0, np.pi/20, 0])
+    p_w_obj_ref = iBee.datas[0].oMf[rightObjectID].translation + np.array([0.02, 0.03, 0.06])
+    rpy = np.array([0, np.pi/4, 0])
     p_R_obj_ref = iBee.datas[0].oMf[rightObjectID].rotation @ pin.rpy.rpyToMatrix(rpy)
     H_obj_ref = pin.SE3(p_R_obj_ref, p_w_obj_ref)
-    print(H_obj_ref.translation)
-    target = 'pos'
+    target = 'full'
 
     qf_r = iBee.inverseKinematics(iBee.models[0], qi_r, H_obj_ref, rightObjectID, target=target)
     print(qf_r)
@@ -127,11 +130,13 @@ def main():
     pin.forwardKinematics(iBee.models[0], iBee.datas[0], qf_r)
     pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
     print(iBee.datas[0].oMf[rightObjectID])
+    p_r_final = iBee.datas[0].oMf[rightHandID].translation
 
 
     pin.forwardKinematics(iBee.models[1], iBee.datas[1], qf_l)
     pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
     print(iBee.datas[1].oMf[leftObjectID])
+    p_l_final = iBee.datas[1].oMf[leftHandID].translation
 
     """
     Simulation variables
@@ -182,8 +187,8 @@ def main():
     v_r[0] = vi_r
     v_l[0] = vi_l
 
-    twist_r[0] = vi_r
-    twist_l[0] = vi_l
+    twist_r[0] = np.zeros((6, ))
+    twist_l[0] = np.zeros((6, ))
 
     for i in range(N):
         # Solve OCP
@@ -228,8 +233,6 @@ def main():
     print(f'left q_ref :{qf_l}')
     print(f'right p :{p_r[:, -1]}')
     print(f'left p :{p_l[:, -1]}')
-    print(f'right p_ref :{p_r_arm_ref}')
-    print(f'left p_ref :{p_l_arm_ref}')
     print(f'Distance in the end {np.linalg.norm(p_r[:, -1] - p_l[:, -1])}')
 
     # --------------PLOTS-----------
@@ -260,7 +263,7 @@ def main():
             't':t,
             'xlabel': 'Time [s]',
             'ylabel': 'Joint Velocities [rad/s]',
-            'title': 'Joint Reference Tracking (right)',
+            'title': 'Joint Velocitites (right)',
             })
 
         plotTraj({
@@ -269,7 +272,7 @@ def main():
             't':t,
             'xlabel': 'Time [s]',
             'ylabel': 'Joint Velocities [rad/s]',
-            'title': 'Joint Reference Tracking (left)',
+            'title': 'Joint Velocities (left)',
             })
 
         plotTraj({

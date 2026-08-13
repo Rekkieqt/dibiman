@@ -80,6 +80,7 @@ class armNMPC:
         self.datas = []
         for model in self.models:
             self.datas.append(model.createData())
+
     def setFrameIDs(self, rightFrameId, leftFrameId) -> None:
         self.rightFrameId = rightFrameId
         self.leftFrameId = leftFrameId
@@ -359,7 +360,7 @@ class armNMPC:
         self.Xinit = [np.zeros((self.nx, )) for _ in range(self.H + 1)]
         self.Ainit = [np.zeros((self.na, )) for _ in range(self.H)]
         self.Uinit = [np.zeros((self.nu, )) for _ in range(self.H)]
-        self.S = []
+        # self.S = []
 
     def set_initial(self) -> None:
         for k in range(self.H):
