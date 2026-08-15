@@ -97,12 +97,12 @@ def main():
     iBee.models[1].addFrame(l_hand_to_obj_frame)
     leftObjectID = iBee.models[1].getFrameId('l_hand_to_obj')
 
-    iBee.createDatas()
+    iBee.createDatas(armParams)
     pin.forwardKinematics(iBee.models[0], iBee.datas[0], qi_r)
     pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
     pin.forwardKinematics(iBee.models[1], iBee.datas[1], qi_l)
     pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
-    iBee.setFrameIDs(rightObjectID, leftObjectID)
+    iBee.setJacFrameIDs(rightObjectID, leftObjectID)
 
     """
     Inverse Kinematics - Joint Reference and Torque Stationarity
@@ -190,6 +190,17 @@ def main():
     twist_r[0] = np.zeros((6, ))
     twist_l[0] = np.zeros((6, ))
 
+    try:
+        wrench_r, wrench_l = iBee.objForceSolver(objParams) 
+    except Exception as e:
+        raise
+
+    print(f'right wrench :{wrench_r}')
+    print(f'left wrench :{wrench_l}')
+    fc = np.hstack((wrench_r, wrench_l))
+    print(np.hstack((wrench_r, wrench_l)).shape)
+    print(iBee.G @ fc)
+
     for i in range(N):
         # Solve OCP
         try:
@@ -219,13 +230,6 @@ def main():
         pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
         p_l[:, i + 1] = iBee.datas[1].oMf[leftHandID].translation.copy()
 
-    try:
-        wrench_r, wrench_l = iBee.objForceSolver(objParams) 
-    except Exception as e:
-        raise
-
-    print(f'right wrench :{wrench_r}')
-    print(f'left wrench :{wrench_l}')
 
     print(f'right q :{q_r[-1]}')
     print(f'left q :{q_l[-1]}')
@@ -339,14 +343,14 @@ def main():
             'title': 'Left End-Effector Velocities'
             })
 
-        plotTraj({
-            'x':np.vstack((wrench_r, wrench_l)),
-            'xref':vi_r,
-            't':t,
-            'xlabel': 'Time [s]',
-            'ylabel': 'Spatial Wrenches (right, left)',
-            'title': 'Forces applied at the End-Effectors'
-            })
+        # plotTraj({
+        #     'x': np.hstack((wrench_r, wrench_l)),
+        #     'xref':vi_r,
+        #     't':t,
+        #     'xlabel': 'Time [s]',
+        #     'ylabel': 'Spatial Wrenches (right, left)',
+        #     'title': 'Forces applied at the End-Effectors'
+        #     })
 
     except ImportError as err:
         print(
@@ -357,4 +361,5 @@ def main():
 
 
 if __name__ == "__main__":
+    np.set_printoptions(precision=3, suppress=True)
     main()

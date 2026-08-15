@@ -15,7 +15,7 @@ class armNMPC:
         for arm in armParameters:
             self.models.append(self.getArmModel(arm))
 
-        self.createDatas()
+        self.createDatas(armParameters)
         self.nq = self.models[0].nq
         self.nv = self.models[0].nv
         self.na = self.nq
@@ -76,12 +76,15 @@ class armNMPC:
         data = model.createData()
         return model
 
-    def createDatas(self) -> None:
+    def createDatas(self, armParams) -> None:
         self.datas = []
-        for model in self.models:
+        self.handIds = []
+        for model, arm in zip(self.models, armParams):
             self.datas.append(model.createData())
+            prefix = arm['prefix']
+            self.handIds.append(model.getFrameId(prefix + 'hand'))
 
-    def setFrameIDs(self, rightFrameId, leftFrameId) -> None:
+    def setJacFrameIDs(self, rightFrameId, leftFrameId) -> None:
         self.rightFrameId = rightFrameId
         self.leftFrameId = leftFrameId
 
@@ -91,8 +94,6 @@ class armNMPC:
         """
         model = pin.buildModelFromUrdf(params['path'], pin.JointModelFreeFlyer())
         data = model.createData()
-        # for i in range(model.njoints):
-        #     print(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
         inertias = model.inertias[1]
         R = ca.DM.eye(3) # Rotation matrix of the body to the inertial/world frame
         I = inertias.inertia # Inertia tensor 3x3
@@ -101,21 +102,19 @@ class armNMPC:
         inertMat = ca.horzcat(ca.DM.zeros((3, 3)), I)
         M = ca.vertcat(massMat, inertMat)
 
-        # Contact locations
-        # p1 = params['pr']
-        # p2 = params['pl']
-        # Grasp Matrices 1 and 2
-        # M1 = pin.SE3(self.R1, np.zeros((3, )))
-        # self.GR = M1.dualAction @ self.B
-        # M2 = pin.SE3(self.R2, np.zeros((3, )))
-        # self.GL = M2.dualAction @ self.B
-
-        # Body Wrenches
+        # Hand Wrenches
         f1 = ca.SX.sym('wrench1', 6)
         f2 = ca.SX.sym('wrench2', 6)
-        
-        # Forces on the body
-        hnet = f1 + f2
+
+        H_r_con_world = self.handToContactSE3(self.models[0], self.datas[0], self.handIds[0], np.zeros((3, )))
+        H_l_con_world = self.handToContactSE3(self.models[1], self.datas[1], self.handIds[1], np.array([-np.pi/2, 0, 0]))
+
+        H_r_con_to_obj = self.contactToObjectSE3(self.models[0], self.datas[0], self.rightFrameId, H_r_con_world)
+        H_l_con_to_obj = self.contactToObjectSE3(self.models[1], self.datas[1], self.leftFrameId, H_l_con_world)
+
+        self.G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
+        fc = ca.vertcat(f1, f2)
+        hnet = self.G @ fc
         Fg = R.T @ np.array([0, 0, -9.8])
 
         # Body frame instantenous velocity
@@ -131,13 +130,12 @@ class armNMPC:
         dV = ca.inv(M) @ (dV + hnet)
         twist = ca.vertcat(v, w)
 
-        # Explicit Euler integration
-        # V0 = ca.SX.sym('Vk', 6)
-        # Vk = V0 + dV * self.dt
-        # return ca.Function('Jh', [V0, f1, f2], [Vk], ['v0', 'f1', 'f2'], ['Vk'])
         return ca.Function('ObjDynEq', [twist, f1, f2], [dV], ['vel', 'f1', 'f2'], ['acc'])
 
-    def softFingerGrasp(self, miu=2, gamma=2) -> ca.Function:
+    def softFingerGrasp(self, miu=1, gamma=2) -> ca.Function:
+        """
+        Coulomb Friction Cone
+        """
         f = ca.SX.sym('force', 6)
         eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
         eps2 = f[2]
@@ -237,13 +235,10 @@ class armNMPC:
         q = ca.SX.sym('q', cmodel.nq)
         v = ca.SX.sym('v', cmodel.nv)
 
-        # frame = arm + 'hand'
-        # frameID = cmodel.getFrameId(frame)
-
         J = cpin.computeFrameJacobian(cmodel, cdata, q, frameID, pin.WORLD)
 
         dx = J @ v
-        lin_vel = dx[0:3]
+        # lin_vel = dx[0:3]
         x = ca.vertcat(q, v)
         # return ca.Function('J_obj', [q], [J_custom], ['q'], ['Jac'])
         return ca.Function('J_obj', [x], [dx], ['x'], ['spatial_vel'])
@@ -253,8 +248,6 @@ class armNMPC:
         objDynamics = self.objectDynamics(objectParams)
         frictCone = self.softFingerGrasp()
         twist0 = np.ones((6, ))
-        h1 = np.ones((6, ))
-        h2 = np.ones((6, ))
 
         H = int(T/self.dt)
 
@@ -282,8 +275,8 @@ class armNMPC:
         opti.set_value(twistV, np.zeros((6, )))
         
         solution = opti.solve()
-        F1_star = np.squeeze(solution.value(F1[-1]))
-        F2_star = np.squeeze(solution.value(F2[-1]))
+        F1_star = np.array(solution.value(F1[-1]))
+        F2_star = np.array(solution.value(F2[-1]))
         
         return F1_star, F2_star
 
@@ -300,7 +293,6 @@ class armNMPC:
             self.Xl.append(self.optimizer.variable(self.nx))
             self.Ul.append(self.optimizer.variable(self.nu))
             self.Al.append(self.optimizer.variable(self.na))
-            # self.S.append(self.optimizer.variable(self.nJ))
         self.Xr.append(self.optimizer.variable(self.nx))
         self.Xl.append(self.optimizer.variable(self.nx))
         
@@ -319,11 +311,6 @@ class armNMPC:
             obj += ca.mtimes([(self.Ul[i] - self.urfl).T, R, self.Ul[i] - self.urfl])
             obj += ca.mtimes([(self.Al[i]).T, Qa, self.Al[i]])
 
-            # obj += 10000 * ca.sumsqr(self.S[i])
-
-            # err = self.armJacobian(self.models[0], 'r_')(self.Xr[k + 1]) - self.armJacobian(self.models[1], 'l_')(self.Xl[k + 1])
-            # obj += 50 * err.T @ err
-
         self.optimizer.minimize(obj)
         """ Add terminal cost later... """
 
@@ -339,7 +326,6 @@ class armNMPC:
 
             err = self.armJacobian(self.models[0], self.rightFrameId)(self.Xr[k + 1]) - self.armJacobian(self.models[1], self.leftFrameId)(self.Xl[k + 1])
             self.optimizer.subject_to(err == 0)
-            # self.optimizer.subject_to(err - self.S[k] <= 0)
 
         self.optimizer.solver('ipopt', self.solverOptions)
 
@@ -360,7 +346,6 @@ class armNMPC:
         self.Xinit = [np.zeros((self.nx, )) for _ in range(self.H + 1)]
         self.Ainit = [np.zeros((self.na, )) for _ in range(self.H)]
         self.Uinit = [np.zeros((self.nu, )) for _ in range(self.H)]
-        # self.S = []
 
     def set_initial(self) -> None:
         for k in range(self.H):
@@ -386,8 +371,6 @@ class armNMPC:
         # self.updateSolution(solution)
         u_r_star = np.squeeze(solution.value(self.Ur[0]))
         u_l_star = np.squeeze(solution.value(self.Ul[0]))
-        # f_cost = solution.value(self.optimizer.f())
-        # print(f'Cost Eval {f_cost}')
         return u_r_star, u_l_star
 
     def inverseKinematics(self, model, q0, Href, frame_id, target='full'):
@@ -430,18 +413,27 @@ class armNMPC:
             print(f"Convergence achieved for {model.frames[frame_id].name}!")  
         else:  
             print(f"\nWarning: the iterative algorithm has not reached convergence to the desired precision {model.frames[frame_id].name}")  
-      
-        # print(f"\nresult: {q.flatten().tolist()}")  
-        # print(f"\nfinal error: {err.T}")  
         return q
 
-    def eeFrameToObjFrame(self, model) -> None:
-        rpyLeftArm = np.array([-np.pi, 0, 0])
-        RcLeft = pin.rpy.rpyToMatrix(rpyLeftArm)
-        pcLeft = .5 * (p_r + p_l)
+    def handToContactSE3(self, model, data, handId, rpyVec=np.zeros((3, ))):
+        ''' Rotating the hand such that z direction points inwards the object '''
+        R_ = pin.rpy.rpyToMatrix(rpyVec)
 
-        RcRight = regular
-        pcRight = pcLeft
+        ''' Obtain world SE3 of the hand '''
+        H_hand = data.oMf[handId]
+
+        ''' Relative between hand and contact '''
+        H_con = pin.SE3(R_, 
+                         np.zeros((3, )))
+
+        H_con_world = H_hand * H_con
+
+        return H_con_world
+
+    def contactToObjectSE3(self, model, data, objectFrameId, H_con_world):
+        ''' Relative between hand and object '''
+        H_con_to_obj = H_con_world.inverse() * data.oMf[objectFrameId]
+        return H_con_to_obj
 
     def updateSolution(self, solution) -> None:
         for k in range(self.H):

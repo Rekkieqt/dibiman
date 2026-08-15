@@ -70,6 +70,11 @@ def main():
     hand_str = armParams['arm'] + 'hand'
     hand_id = model.getFrameId(hand_str)
 
+    """
+    Rotating the Right Hand to have 'z' inwards
+    """
+    rot_x_pi = pin.rpy.rpyToMatrix(np.array([-pi/2, 0, 0]))
+
 
 if __name__ == "__main__":
     main()
