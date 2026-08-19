@@ -119,8 +119,6 @@ class armNMPC:
         H_r_con_to_obj = self.contactToObjectSE3(self.models[0], self.datas[0], self.objIds[0], H_r_con_world)
         H_l_con_to_obj = self.contactToObjectSE3(self.models[1], self.datas[1], self.objIds[1], H_l_con_world)
 
-        print(np.linalg.matrix_rank(H_r_con_to_obj.dualAction))
-        print(np.linalg.matrix_rank(H_l_con_to_obj.dualAction))
         self.G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
         fc = ca.vertcat(f1, f2)
         hnet = self.G @ fc
