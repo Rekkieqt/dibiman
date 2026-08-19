@@ -31,21 +31,20 @@ def main():
     """
     model, data = icubCtrler.pinModelandData()
     """ Print Arm Model Data """
-    with open('leftArmData.txt', 'w+') as f:
-        # Joints with their names
-        f.write("JOINTS:\n")
-        for i in range(model.njoints):
-            f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
-        
-        # Frames with details
-        f.write("\nFRAMES:\n")
-        for i in range(model.nframes):
-            frame = model.frames[i]
-            f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
-    f.close()
+    # with open('leftArmData.txt', 'w+') as f:
+    #     # Joints with their names
+    #     f.write("JOINTS:\n")
+    #     for i in range(model.njoints):
+    #         f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
+    #     
+    #     # Frames with details
+    #     f.write("\nFRAMES:\n")
+    #     for i in range(model.nframes):
+    #         frame = model.frames[i]
+    #         f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
+    # f.close()
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
-    print(cmodel.njoints)
 
     q = ca.SX.sym('q', model.nq)
     v = ca.SX.sym('v', model.nv)
@@ -73,8 +72,53 @@ def main():
     """
     Rotating the Right Hand to have 'z' inwards
     """
-    rot_x_pi = pin.rpy.rpyToMatrix(np.array([-pi/2, 0, 0]))
+    rot_x_pi = pin.rpy.rpyToMatrix(np.array([-np.pi/2, 0, 0]))
+    rot_c1 = pin.rpy.rpyToMatrix(np.array([0, -np.pi/2, -np.pi/2]))
+    rot_c2 = pin.rpy.rpyToMatrix(np.array([np.pi/2, 0, 0]))
+    H_world = pin.SE3(np.eye(3), np.zeros((3, )))
+    H_object = pin.SE3(np.eye(3), np.ones((3, )))
+    H_l = pin.SE3(rot_c1, np.array([0, -3, 0]))
+    H_r = pin.SE3(rot_c2, np.array([0, 3, 0]))
+    fc_r = np.array([0, 0, 5, 0, 0, 0])
+    fc_l = np.array([0, 0, 5, 0, 0, 0])
+    print(f'fc_r: {fc_r}')
+    print(f'fc_l: {fc_l}')
+    fo_r = H_r.dualAction @ fc_r
+    fo_l = H_l.dualAction @ fc_l
+    # print(fo_r)
+    # print(fo_l)
+    # print(fo_r + fo_l)
+
+    """ goc1 -1 """
+    H_o_cl = H_object.inverse() * (H_object * H_l) 
+    H_o_cr = H_object.inverse() * (H_object * H_r) 
+
+    H_cl_o = H_o_cl.inverse()
+    H_cr_o = H_o_cr.inverse()
+
+    fo_l = H_cl_o.dualAction @ fc_l
+    fo_r = H_cr_o.dualAction @ fc_r
+    print(f'fo_r: {fo_r}')
+    print(f'fo_l: {fo_l}')
+    print(f'fo_l + fo_r: {fo_r + fo_l}')
+    sys.exit()
+
+    """ 3D plot"""
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel('X [m]')
+    ax.set_ylabel('Y [m]')
+    ax.set_zlabel('Z [m]')
+    ax.set_xlim(-5, 5)
+    ax.set_ylim(-5, 5)
+    ax.set_zlim(-5, 5)
+    plotCoordinateFrame(ax, np.array(H_world), name='world')
+    plotCoordinateFrame(ax, np.array(H_object), name='object')
+    plotCoordinateFrame(ax, np.array(H_object * H_r), name='c_right')
+    plotCoordinateFrame(ax, np.array(H_object * H_l), name='c_left')
+    plt.show()
 
 
 if __name__ == "__main__":
+    np.set_printoptions(precision=3, suppress=True)
     main()

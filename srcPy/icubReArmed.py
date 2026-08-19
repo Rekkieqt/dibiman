@@ -46,7 +46,6 @@ def main():
     Initial Configuration
 
     """
-
     # Hand Ids
     rightHandID = iBee.models[0].getFrameId(right + 'hand')
     leftHandID = iBee.models[1].getFrameId(left + 'hand')
@@ -76,40 +75,39 @@ def main():
     # SE(3) l_hand -> object c.o.m.
     last_joint_r = iBee.models[1].njoints - 1 
     r_hand_to_obj_H = iBee.datas[0].oMi[last_joint_r].inverse() * object_frame
-    r_hand_to_obj_frame = pin.Frame('r_hand_to_obj',
+    r_hand_to_obj_frame = pin.Frame('r_object',
                                     iBee.models[0].frames[rightHandID].parentJoint,
                                     rightHandID,
                                     r_hand_to_obj_H,
                                     pin.FrameType.OP_FRAME
                                     )
     iBee.models[0].addFrame(r_hand_to_obj_frame)
-    rightObjectID = iBee.models[0].getFrameId('r_hand_to_obj')
+    rightObjectID = iBee.models[0].getFrameId('r_object')
 
     # SE(3) l_hand -> object c.o.m.
     last_joint_l = iBee.models[1].njoints - 1 
     l_hand_to_obj_H = iBee.datas[1].oMi[last_joint_l].inverse() * object_frame
-    l_hand_to_obj_frame = pin.Frame('l_hand_to_obj',
+    l_hand_to_obj_frame = pin.Frame('l_object',
                                     iBee.models[1].frames[leftHandID].parentJoint,
                                     leftHandID,
                                     l_hand_to_obj_H,
                                     pin.FrameType.OP_FRAME
                                     )
     iBee.models[1].addFrame(l_hand_to_obj_frame)
-    leftObjectID = iBee.models[1].getFrameId('l_hand_to_obj')
+    leftObjectID = iBee.models[1].getFrameId('l_object')
 
     iBee.createDatas(armParams)
     pin.forwardKinematics(iBee.models[0], iBee.datas[0], qi_r)
     pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
     pin.forwardKinematics(iBee.models[1], iBee.datas[1], qi_l)
     pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
-    iBee.setJacFrameIDs(rightObjectID, leftObjectID)
+    iBee.createObjIds(armParams)
 
     """
     Inverse Kinematics - Joint Reference and Torque Stationarity
 
     """
-    print('Initial Distance:')
-    print(np.linalg.norm(p_r_arm - p_l_arm))
+    print(f'Initial Distance: {np.linalg.norm(p_r_arm - p_l_arm)}')
 
     p_w_obj_ref = iBee.datas[0].oMf[rightObjectID].translation + np.array([0.02, 0.03, 0.06])
     rpy = np.array([0, np.pi/4, 0])
@@ -118,30 +116,16 @@ def main():
     target = 'full'
 
     qf_r = iBee.inverseKinematics(iBee.models[0], qi_r, H_obj_ref, rightObjectID, target=target)
-    print(qf_r)
     xf_r = np.concatenate((qf_r, vi_r), axis=0)
     tau_r_ref = pin.rnea(iBee.models[0], iBee.datas[0], qf_r, vi_r, vi_r)
 
     qf_l = iBee.inverseKinematics(iBee.models[1], qi_l, H_obj_ref, leftObjectID, target=target)
-    print(qf_l)
     xf_l = np.concatenate((qf_l, vi_l), axis=0)
     tau_l_ref = pin.rnea(iBee.models[1], iBee.datas[1], qf_l, vi_l, vi_l)
-
-    pin.forwardKinematics(iBee.models[0], iBee.datas[0], qf_r)
-    pin.updateFramePlacements(iBee.models[0], iBee.datas[0])
-    print(iBee.datas[0].oMf[rightObjectID])
-    p_r_final = iBee.datas[0].oMf[rightHandID].translation
-
-
-    pin.forwardKinematics(iBee.models[1], iBee.datas[1], qf_l)
-    pin.updateFramePlacements(iBee.models[1], iBee.datas[1])
-    print(iBee.datas[1].oMf[leftObjectID])
-    p_l_final = iBee.datas[1].oMf[leftHandID].translation
 
     """
     Simulation variables
     """
-
     T = 5
     N = int(T/dt)
     t = np.linspace(0, T, N+1)
@@ -200,6 +184,7 @@ def main():
     fc = np.hstack((wrench_r, wrench_l))
     print(np.hstack((wrench_r, wrench_l)).shape)
     print(iBee.G @ fc)
+    sys.exit()
 
     for i in range(N):
         # Solve OCP
@@ -237,7 +222,7 @@ def main():
     print(f'left q_ref :{qf_l}')
     print(f'right p :{p_r[:, -1]}')
     print(f'left p :{p_l[:, -1]}')
-    print(f'Distance in the end {np.linalg.norm(p_r[:, -1] - p_l[:, -1])}')
+    print(f'Distance in the end : {np.linalg.norm(p_r[:, -1] - p_l[:, -1])}')
 
     # --------------PLOTS-----------
     try:

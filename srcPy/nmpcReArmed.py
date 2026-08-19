@@ -84,9 +84,11 @@ class armNMPC:
             prefix = arm['prefix']
             self.handIds.append(model.getFrameId(prefix + 'hand'))
 
-    def setJacFrameIDs(self, rightFrameId, leftFrameId) -> None:
-        self.rightFrameId = rightFrameId
-        self.leftFrameId = leftFrameId
+    def createObjIds(self, armParams) -> None:
+        self.objIds = []
+        for model, arm in zip(self.models, armParams):
+            prefix = arm['prefix']
+            self.objIds.append(model.getFrameId(prefix + 'object'))
 
     def objectDynamics(self, params) -> ca.Function:
         """
@@ -105,16 +107,24 @@ class armNMPC:
         # Hand Wrenches
         f1 = ca.SX.sym('wrench1', 6)
         f2 = ca.SX.sym('wrench2', 6)
+        # Rotate the hand frames to have 'z' inward
+        # H_r_con_world = self.handToContactSE3(self.models[0], self.datas[0], self.handIds[0], np.zeros((3, )))
+        # H_l_con_world = self.handToContactSE3(self.models[1], self.datas[1], self.handIds[1], np.array([-np.pi/2, 0, 0]))
 
-        H_r_con_world = self.handToContactSE3(self.models[0], self.datas[0], self.handIds[0], np.zeros((3, )))
-        H_l_con_world = self.handToContactSE3(self.models[1], self.datas[1], self.handIds[1], np.array([-np.pi/2, 0, 0]))
+        # Rotate the object frames such that they have a 'z' inward p. 239 "Intro to Robotic Manipulation 1994"
+        p_r = self.datas[0].oMf[self.handIds[0]].translation
+        p_l = self.datas[1].oMf[self.handIds[1]].translation
+        H_r_con_world, H_l_con_world = self.contactWorldSE3(p_r, p_l)
 
-        H_r_con_to_obj = self.contactToObjectSE3(self.models[0], self.datas[0], self.rightFrameId, H_r_con_world)
-        H_l_con_to_obj = self.contactToObjectSE3(self.models[1], self.datas[1], self.leftFrameId, H_l_con_world)
+        H_r_con_to_obj = self.contactToObjectSE3(self.models[0], self.datas[0], self.objIds[0], H_r_con_world)
+        H_l_con_to_obj = self.contactToObjectSE3(self.models[1], self.datas[1], self.objIds[1], H_l_con_world)
 
+        print(np.linalg.matrix_rank(H_r_con_to_obj.dualAction))
+        print(np.linalg.matrix_rank(H_l_con_to_obj.dualAction))
         self.G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
         fc = ca.vertcat(f1, f2)
         hnet = self.G @ fc
+        # hnet = H_r_con_to_obj.dualAction @ f1 + H_l_con_to_obj.dualAction @ f2
         Fg = R.T @ np.array([0, 0, -9.8])
 
         # Body frame instantenous velocity
@@ -132,14 +142,14 @@ class armNMPC:
 
         return ca.Function('ObjDynEq', [twist, f1, f2], [dV], ['vel', 'f1', 'f2'], ['acc'])
 
-    def softFingerGrasp(self, miu=1, gamma=2) -> ca.Function:
+    def softFingerGrasp(self, miu=.9, gamma=.5) -> ca.Function:
         """
         Coulomb Friction Cone
         """
         f = ca.SX.sym('force', 6)
         eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
         eps2 = f[2]
-        eps3 = gamma * f[2] - ca.sqrt(f[3]**2 + 1e-6)
+        eps3 = ca.sqrt(f[5]**2 + 1e-6) - gamma * f[2] 
         c_coeff = ca.vertcat(eps1, eps2, eps3)
         return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
 
@@ -324,7 +334,7 @@ class armNMPC:
             self.optimizer.subject_to(self.Xl[k + 1] == self.inverseModel(self.nq)(self.Xl[k], self.Al[k]))
             self.optimizer.subject_to(self.Ul[k] == self.rnea(self.models[1])(self.Xl[k], self.Al[k]))
 
-            err = self.armJacobian(self.models[0], self.rightFrameId)(self.Xr[k + 1]) - self.armJacobian(self.models[1], self.leftFrameId)(self.Xl[k + 1])
+            err = self.armJacobian(self.models[0], self.handIds[0])(self.Xr[k + 1]) - self.armJacobian(self.models[1], self.handIds[1])(self.Xl[k + 1])
             self.optimizer.subject_to(err == 0)
 
         self.optimizer.solver('ipopt', self.solverOptions)
@@ -343,6 +353,7 @@ class armNMPC:
         self.Xl = []
         self.Ul = []
         self.Al = []
+
         self.Xinit = [np.zeros((self.nx, )) for _ in range(self.H + 1)]
         self.Ainit = [np.zeros((self.na, )) for _ in range(self.H)]
         self.Uinit = [np.zeros((self.nu, )) for _ in range(self.H)]
@@ -415,6 +426,22 @@ class armNMPC:
             print(f"\nWarning: the iterative algorithm has not reached convergence to the desired precision {model.frames[frame_id].name}")  
         return q
 
+    def contactWorldSE3(self, p_right, p_left):
+        ''' Given icub world/root reference frame, object being in front '''
+        # Rc_right = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
+        rot_c1 = pin.rpy.rpyToMatrix(np.array([0, -np.pi/2, -np.pi/2]))
+        # Rc_left = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+        rot_c2 = pin.rpy.rpyToMatrix(np.array([np.pi/2, 0, 0]))
+
+        H_r_con_world = pin.SE3(rot_c2, p_right)
+        H_l_con_world = pin.SE3(rot_c1, p_left)
+        return H_r_con_world, H_l_con_world
+
+    def contactToObjectSE3(self, model, data, objectFrameId, H_con_world):
+        ''' Relative between hand and object '''
+        H_con_to_obj = data.oMf[objectFrameId].inverse() * H_con_world
+        return H_con_to_obj
+
     def handToContactSE3(self, model, data, handId, rpyVec=np.zeros((3, ))):
         ''' Rotating the hand such that z direction points inwards the object '''
         R_ = pin.rpy.rpyToMatrix(rpyVec)
@@ -429,11 +456,6 @@ class armNMPC:
         H_con_world = H_hand * H_con
 
         return H_con_world
-
-    def contactToObjectSE3(self, model, data, objectFrameId, H_con_world):
-        ''' Relative between hand and object '''
-        H_con_to_obj = H_con_world.inverse() * data.oMf[objectFrameId]
-        return H_con_to_obj
 
     def updateSolution(self, solution) -> None:
         for k in range(self.H):
