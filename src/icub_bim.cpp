@@ -40,77 +40,20 @@
 #include "pinocchio/algorithm/joint-configuration.hpp"
 
 /* NMPC libraries */
-// #include "../include/nmpc_fmpc/FmpcSolver.h"
+#include "dibiman/nmpc/baseNMPC.hpp"
+#include "dibiman/nmpc/centralizedNMPC.hpp"
 
 using namespace yarp::os;
 using namespace yarp::dev;
 using namespace yarp::math;
-using namespace std;
 using namespace pinocchio;
-
-/* NMPC library testing (START) */
-
-/* NMPC library testing (END) */
 
 template<typename T>
 bool is_in_vector(const std::vector<T> & vector, const T & elt) {
   return vector.end() != std::find(vector.begin(), vector.end(), elt);
 }
 
-bool iKin(pinocchio::Model & model, pinocchio::Data & data, Eigen::VectorXd & q, Eigen::Ref<Eigen::VectorXd> q_m) {
-
-  /* constants */
-  const int joint_id = 6; /* one extra because of universe, or just count from 1 */
-  const double eps = 1e-4;
-  const int IT_MAX = 800;
-  const double DT = 1e-1;
-  const double damp = 1e-6;
-  bool success = false;
-
-  /* Eigen::VectorXd q = pinocchio::neutral(model); */
-  // int q_size = 7;
-  // Eigen::Map<Eigen::VectorXd> q(q_meas, q_size);
-  q = q_m;
-  pinocchio::forwardKinematics(model, data, q);
-  pinocchio::SE3 oMdes(data.oMi[joint_id].rotation(), data.oMi[joint_id].translation() + Eigen::Vector3d(0.0, 0.0, 0.15));
-  cout << "quaternion curr" << oMdes.rotation() << endl;
-
-  pinocchio::Data::Matrix6x J(6, model.nv);
-  J.setZero();
-
-  typedef Eigen::Matrix<double, 6, 1> Vector6d;
-  Vector6d err;
-  Eigen::VectorXd v(model.nv);
-  for (int i = 0;; i++) {
-    const pinocchio::SE3 iMd = data.oMi[joint_id].actInv(oMdes);
-    err = pinocchio::log6(iMd).toVector(); /* joint frame */
-
-    if (err.norm() < eps) { /* stoping criteria = error */
-      success = true;
-      break;
-    }
-    if (i >= IT_MAX) { /* stopping criteira = iterations */
-      success = false;
-      break;
-    }
-    pinocchio::computeJointJacobian(model, data, q, joint_id, J); /* Jacobian joint frame */
-    pinocchio::Data::Matrix6 Jlog;
-    pinocchio::Jlog6(iMd.inverse(), Jlog);
-    J = -Jlog * J;
-    pinocchio::Data::Matrix6 JJt;
-    JJt.noalias() = J * J.transpose();
-    JJt.diagonal().array() += damp;
-    v.noalias() = -J.transpose() * JJt.ldlt().solve(err);
-    q = pinocchio::integrate(model, q, v * DT);
-    
-  }
-  cout << "quaternion ref" << data.oMi[joint_id].rotation() << endl;
-  std::cout << "\nq_ref: " << q.transpose() << std::endl;
-  return success;
-}
-
 /* logging function */
-
 void logData(std::fstream & logfile, Eigen::Ref<Eigen::VectorXd> tau, Eigen::Ref<Eigen::VectorXd> qread, int size) {
   /* log torques */
   for (int i=0; i < size; ++i) {
@@ -151,8 +94,6 @@ void logRef(std::fstream & reffile, Eigen::VectorXd& qref, int size) {
 
 int main(int argc, char **argv)
 {
-    /* where to put example nmpc */
-
     /* dynamic parameter loading with rf*/
     ResourceFinder rf;
     rf.configure(argc, argv);
@@ -171,7 +112,7 @@ int main(int argc, char **argv)
     
     if (robotName=="")
     {
-        cout << "Failed loading config file!" << endl;
+        std::cout << "Failed loading config file!" << std::endl;
         return -1;
     }
 
@@ -239,55 +180,25 @@ int main(int argc, char **argv)
 
     /* wait for the other node to come online */
     while (!(yarp.connect(outPort, writePort) || single_mode)) {
-        cout << "Waiting for the other node to connect ..." << endl;
+        std::cout << "Waiting for the other node to connect ..." << std::endl;
         yarp::os::Time::delay(3);
     }
 
-    /* +++++++++++ Loading the Model ++++++++++++++*/
-    Model model, reduced_model;
-    pinocchio::urdf::buildModel(urdf_filename, model);
-
-    /* arm joints */
-    std::vector<std::string> arm_config = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch"};
-    /*, "_wrist_yaw"}; unused joint */
-
-    /* joints to use */
-    for (auto it = arm_config.begin(); it != arm_config.end(); ++it){
-      *it = arm_prefix + *it;
-    }
-    std::vector<JointIndex> keep_unlocked_by_id, keep_locked_by_id;
-    for (std::vector<std::string>::const_iterator it = arm_config.begin();
-        it != arm_config.end();
-        ++it){
-      const std::string & joint_name = *it;
-      if (model.existJointName(joint_name)){
-        keep_unlocked_by_id.push_back(model.getJointId(joint_name));
-      }
-    }
-
-    /* invert the list */
-    for (JointIndex joint_id = 1; joint_id < model.joints.size(); ++joint_id) {
-      const std::string joint_name = model.names[joint_id];
-      if (is_in_vector(arm_config, joint_name)){
-        continue;
-      }
-      else {
-        keep_locked_by_id.push_back(joint_id);
-      }
-    }
-
-    /* sample neutral config */
-    Eigen::VectorXd q_full = pinocchio::neutral(model);
-
-    /* build the reduced model */
-    reduced_model = pinocchio::buildReducedModel(model, keep_locked_by_id, q_full);
-
-    /* Create data required by the algorithms */
-    Data data(reduced_model);
 
     /* +++++++++++ ARM CONTROL START ++++++++++++++*/
+    /* arm joints */
+    std::vector<std::string> joints_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "_wrist_yaw"};
+    std::vector<std::string> prefixes = {"r_", "l_"};
+
+    /* nmpc object init */
+    dibiman::centralizedNMPC manip_controller(
+        urdf_filename,
+        joints_list,
+        prefixes
+        );
+
     /* remote controller */
-    int idx_joints[] = {0, 1, 2, 3, 4, 5};
+    int idx_joints[] = {0, 1, 2, 3, 4, 5, 6};
     int all_arm_joints = 0;
     armSensors->getAxes(&all_arm_joints);
 
@@ -305,32 +216,29 @@ int main(int argc, char **argv)
     // Eigen::Map<Eigen::VectorXd> tau_meas_v(tau_meas, joints);
 
     std::string logfile = "../../logs/" + partName + ".csv";
-    fstream file(logfile, ios::out | ios::trunc);
+    std::fstream file(logfile, std::ios::out | std::ios::trunc);
     logHeader(file, joints);
 
     /* set control mode for arm */
-    int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
+    int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
     // controlMode->setControlModes(joints, idx_joints, modes);
 
-    /* solve inverse kinematics */
-    /* iKin(reduced_model, data, q_ref_v, q_meas_v); */
     /* log the ref angles */
     // std::string reffile = "../../logs/" + partName + "_ref.csv";
     // fstream ref(reffile, ios::out | ios::trunc);
     /* logRef(ref, q_ref_v, joints); */
     // ref.close();
-    int handID = reduced_model.getFrameId(arm_prefix + "hand");
 
     for (int i = 0; i < 2; i++) {
 
-        for (int j = 0; j < std::size(idx_joints) ; j++) {
+        for (int j = 0; j < static_cast<int>(std::size(idx_joints)) ; j++) {
           armSensors->getEncoder(idx_joints[j], &q_sens[j]);
           q_sens[j] = (M_PI/180) * q_sens[j];
           std::cout << q_sens[j] << std::endl;
         }
-        pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
-        pinocchio::updateFramePlacements(reduced_model, data);  
-        std::cout << data.oMf[handID] << std::endl;
+        // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
+        // pinocchio::updateFramePlacements(reduced_model, data);  
+        // std::cout << data.oMf[handID] << std::endl;
 
         /* send torque commands */
         // ok = torqueControl->setRefTorques(joints, idx_joints, tau);

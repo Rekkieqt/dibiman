@@ -5,6 +5,8 @@
 #include "pinocchio/algorithm/joint-configuration.hpp"  
 #include "pinocchio/algorithm/kinematics.hpp"  
 #include "pinocchio/algorithm/jacobian.hpp"  
+
+#include "dibiman/arm/icub-arm.hpp"
   
 namespace dibiman {
     class baseNMPC {
@@ -32,7 +34,7 @@ namespace dibiman {
             void getArmModel(
                 const std::string & modelpath,
                 const std::string & prefix,
-                const std::vector<std::string> & joints
+                const std::vector<std::string> & joints,
                 icubArm _arm
                 );
 

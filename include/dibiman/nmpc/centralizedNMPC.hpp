@@ -43,6 +43,6 @@ namespace dibiman {
 
             void solve(void) {};
     };
-};
+}
   
 #endif //__dibiman_base_nmpc__

@@ -13,7 +13,7 @@ centralizedNMPC::centralizedNMPC(
     {
         addArmToList(model_path, joints_to_use, prefix);
     }
-};
+}
 
 void 
 centralizedNMPC::rneaSolver(void) {  
