@@ -188,14 +188,14 @@ class armNMPC:
         du_da = cdata.M
 
         rneaJacobian = ca.horzcat(du_dq, du_dv, du_da)
+        # aut_Jac = ca.jacobian(tau, ca.vertcat(q, v, a))
         x = ca.vertcat(q, v)
+
+        # self.compare_jacobians(rneaJacobian, aut_Jac, x, a)
 
         # Define f(x) model
         rneaJac = ca.Function('jac_rnea', [x, a], [rneaJacobian])
-
-        hk_rnea = ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'],
-                                   {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
-        return hk_rnea
+        return ca.Function('rnea', [x, a], [tau], ['x', 'a'], ['tau'], {'custom_jacobian': rneaJac, 'jac_penalty': 0}).expand()
 
     def forwardModel(self, model):
         cmodel = cpin.Model(model)
@@ -461,3 +461,54 @@ class armNMPC:
             self.Uinit[k] = np.squeeze(solution.value(self.U[k]))
             self.Ainit[k] = np.squeeze(solution.value(self.A[k]))
 
+    def compare_jacobians(self, manual_jac, ad_jac, x, a):
+        """Compare manual and automatic Jacobians at a random point"""
+        import numpy as np
+        
+        # Create evaluation functions
+        manual_func = ca.Function('manual', [x, a], [manual_jac])
+        ad_func = ca.Function('ad', [x, a], [ad_jac])
+        
+        # Generate random test point
+        x_test = np.random.randn(x.numel()) * 0.1
+        a_test = np.random.randn(a.numel()) * 0.1
+        
+        # Evaluate both Jacobians
+        manual_val = np.array(manual_func(x_test, a_test)).reshape(
+            manual_jac.size1(), manual_jac.size2())
+        ad_val = np.array(ad_func(x_test, a_test)).reshape(
+            ad_jac.size1(), ad_jac.size2())
+        
+        # Compute differences
+        diff = manual_val - ad_val
+        max_diff = np.max(np.abs(diff))
+        frob_diff = np.linalg.norm(diff, 'fro')
+        rel_diff = frob_diff / (np.linalg.norm(manual_val, 'fro') + 1e-10)
+        
+        print(f"Manual Jacobian shape: {manual_val.shape}")
+        print(f"AD Jacobian shape: {ad_val.shape}")
+        print(f"Max difference: {max_diff:.6e}")
+        print(f"Frobenius norm difference: {frob_diff:.6e}")
+        print(f"Relative difference: {rel_diff:.6e}")
+        
+        if rel_diff < 1e-8:
+            print("✓ Manual and AD Jacobians match!")
+        else:
+            print("✗ Significant difference detected!")
+            
+            # Print some statistics
+            print("\nManual Jacobian statistics:")
+            print(f"  Mean: {np.mean(manual_val):.6e}")
+            print(f"  Std: {np.std(manual_val):.6e}")
+            print(f"  Min: {np.min(manual_val):.6e}")
+            print(f"  Max: {np.max(manual_val):.6e}")
+            
+            print("\nAD Jacobian statistics:")
+            print(f"  Mean: {np.mean(ad_val):.6e}")
+            print(f"  Std: {np.std(ad_val):.6e}")
+            print(f"  Min: {np.min(ad_val):.6e}")
+            print(f"  Max: {np.max(ad_val):.6e}")
+            
+            # Find where differences are largest
+            max_diff_idx = np.unravel_index(np.argmax(np.abs(diff)), diff.shape)
+            print(f"\nLargest difference at index {max_diff_idx}: {diff[max_diff_idx]:.6e}")
