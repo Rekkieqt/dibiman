@@ -26,18 +26,23 @@
 #include <algorithm>
 #include <stdio.h>
 #include <math.h>
-#include <Eigen/Dense>
 
 /* Pinocchio libraries */
-#include "pinocchio/multibody/sample-models.hpp"
+//#include "pinocchio/multibody/sample-models.hpp"
 #include "pinocchio/spatial/explog.hpp"
+
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/jacobian.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
 #include "pinocchio/algorithm/crba.hpp"
-#include "pinocchio/parsers/urdf.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
+
+#include "pinocchio/parsers/urdf.hpp"
+
+/* Casadi and Eigen */
+#include <casadi/casadi.hpp>
+#include <Eigen/Dense>
 
 /* NMPC libraries */
 #include "dibiman/nmpc/baseNMPC.hpp"
@@ -184,7 +189,8 @@ int main(int argc, char **argv)
         yarp::os::Time::delay(3);
     }
 
-
+    /* Casadi Test */
+    casadi::SX q = casadi::SX::sym("q", 6);
     /* +++++++++++ ARM CONTROL START ++++++++++++++*/
     /* arm joints */
     std::vector<std::string> joints_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "_wrist_yaw"};

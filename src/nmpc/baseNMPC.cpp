@@ -1,9 +1,22 @@
 #include "dibiman/nmpc/baseNMPC.hpp"
+#include <Eigen/Dense>
+
 #include "pinocchio/algorithm/joint-configuration.hpp"  
 #include "pinocchio/algorithm/kinematics.hpp"  
 #include "pinocchio/algorithm/jacobian.hpp"  
-#include "pinocchio/parsers/urdf.hpp"  
+#include "pinocchio/algorithm/rnea.hpp"  
+#include "pinocchio/algorithm/frames.hpp"  
 #include "pinocchio/algorithm/model.hpp"  
+
+#include "pinocchio/parsers/urdf.hpp"  
+
+#include "pinocchio/autodiff/casadi.hpp"
+#include "pinocchio/math.hpp"
+
+#include "pinocchio/utils/cast.hpp"
+#include "pinocchio/utils/check.hpp"
+
+#include <casadi/casadi.hpp>
   
 using namespace dibiman;
 
@@ -76,18 +89,18 @@ baseNMPC::inverseKinematics(
   
 void
 baseNMPC::getArmModel(const std::string & modelpath,  
-                      const std::string & prefix,
                       const std::vector<std::string> & joints_to_use,
+                      const std::string & prefix,
                       icubArm _arm)  
 {  
     using namespace pinocchio;
     std::vector<std::string> jointsToFree;  
-    for (const auto & jnt : jointsParam) jointsToFree.push_back(armPrefix + jnt);  
+    for (const auto & jnt : joints_to_use) jointsToFree.push_back(prefix + jnt);  
 
     jointsToFree.push_back("universe");  
 
     Model fullModel;  
-    urdf::buildModel(modelpath, fullModel);  
+    pinocchio::urdf::buildModel(modelpath, fullModel);  
 
     std::vector<JointIndex> jointsToLockIDs;  
     for (const auto & jn : fullModel.names)  
@@ -103,6 +116,7 @@ baseNMPC::getArmModel(const std::string & modelpath,
 
     _arm.model = model;
     _arm.data = data;
+    _arm.hand_id = model.getFrameId(prefix + "hand");
     na = model.nv;
     nu = model.njoints - 1;
     nx = na * 2;
@@ -114,9 +128,9 @@ baseNMPC::inverseModel(icubArm _arm)
     using namespace casadi;  
   
     // Dynamic variables  
-    SX q = SX::sym("q", model.nq);  
-    SX v = SX::sym("v", model.nq);  
-    SX a = SX::sym("a", model.nq);  
+    SX q = SX::sym("q", nu);  
+    SX v = SX::sym("v", nu);  
+    SX a = SX::sym("a", na);  
   
     // Simplified dynamics  
     SX x = vertcat(q, v);  
@@ -132,25 +146,43 @@ baseNMPC::inverseModel(icubArm _arm)
 void
 baseNMPC::rnea(icubArm _arm)
 {  
-    /* model/cmodel/cdata bindings via casadi-pinocchio C++ API */
-    using namespace casadi;  
-  
-    SX q = SX::sym("q", cmodel.nq);  
-    SX v = SX::sym("v", cmodel.nv);  
-    SX a = SX::sym("a", cmodel.nv);  
-  
-    // RNEA + derivatives (via casadi-pinocchio C++ bindings, cpin equivalent)  
-    SX tau = cpin::rnea(cmodel, cdata, q, v, a);  
-    cpin::computeRNEADerivatives(cmodel, cdata, q, v, a);  
-  
-    SX du_dq = cdata.dtau_dq;  
-    SX du_dv = cdata.dtau_dv;  
-    SX du_da = cdata.M;  
-  
-    SX x = vertcat(q, v);  
-  
-    // Correctly-shaped custom Jacobian: placeholder "out_tau" input,  
-    // separately named jac_tau_x / jac_tau_a outputs  
+    using namespace pinocchio;
+    typedef ::casadi::SX ADScalar;  
+    
+    typedef pinocchio::ModelTpl<ADScalar> ADModel;  
+    typedef ADModel::Data ADData;  
+    
+    ADModel ad_model = _arm.model.cast<ADScalar>();  
+    ADData ad_data(ad_model);  
+    
+    typedef ADModel::ConfigVectorType ConfigVectorAD;  
+    typedef ADModel::TangentVectorType TangentVectorAD;  
+    
+    ::casadi::SX cs_q = ::casadi::SX::sym("q", na);  
+    ConfigVectorAD q_ad(na);  
+    q_ad = Eigen::Map<ConfigVectorAD>(  
+      static_cast<std::vector<ADScalar>>(cs_q).data(), na, 1);  
+    
+    ::casadi::SX cs_v = ::casadi::SX::sym("v", na);  
+    TangentVectorAD v_ad(na);  
+    v_ad = Eigen::Map<TangentVectorAD>(  
+      static_cast<std::vector<ADScalar>>(cs_v).data(), na, 1);  
+    
+    ::casadi::SX cs_a = ::casadi::SX::sym("a", na);  
+    TangentVectorAD a_ad(na);  
+    a_ad = Eigen::Map<TangentVectorAD>(  
+      static_cast<std::vector<ADScalar>>(cs_a).data(), na, 1);  
+    
+    pinocchio::rnea(ad_model, ad_data, q_ad, v_ad, a_ad);  
+    
+    ::casadi::SX tau_ad(na, 1);  
+    for (Eigen::Index k = 0; k < na; ++k)  
+      tau_ad(k) = ad_data.tau[k];  
+    
+    _arm.rnea_h = ::casadi::Function(  
+      "eval_rnea", ::casadi::SXVector{cs_q, cs_v, cs_a}, ::casadi::SXVector{tau_ad});  
+
+    /*
     Function rneaJac("jac_rnea",  
         {x, a, MX(1,1)==SX(1,1) ? SX(1,1) : SX(1,1)}, // placeholder for tau output  
         {horzcat(du_dq, du_dv), du_da},  
@@ -159,8 +191,69 @@ baseNMPC::rnea(icubArm _arm)
   
     _arm.rnea = Function("rnea", {x, a}, {tau}, {"x", "a"}, {"tau"},  
         Dict{{"custom_jacobian", rneaJac}, {"jac_penalty", 0}}).expand();  
+        */
 };
 
+void
+baseNMPC::armJacobian(icubArm _arm)
+{
+    typedef pinocchio::ModelTpl<casadi::SX> CasadiModel;  
+    typedef pinocchio::DataTpl<casadi::SX> CasadiData;  
+      
+    CasadiModel cmodel = _arm.model.cast<casadi::SX>();  
+    CasadiData cdata(cmodel);  
+      
+    ::casadi::SX q_sx = casadi::SX::sym("q", na);  
+    ::casadi::SX v_sx = casadi::SX::sym("v", na);  
+      
+    Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1> q =  
+      Eigen::Map<Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1>>(  
+        static_cast<std::vector<casadi::SX>>(q_sx).data(), na);  
+    Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1> v =  
+      Eigen::Map<Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1>>(  
+        static_cast<std::vector<casadi::SX>>(v_sx).data(), na);  
+      
+    CasadiData::Matrix6x J(6, na);  
+    J.setZero();  
+    pinocchio::computeFrameJacobian(cmodel, cdata, q, _arm.hand_id, pinocchio::WORLD, J);  
+      
+    ::casadi::SX J_sx;  
+    pinocchio::casadi::copy(J, J_sx);   // Eigen<SX> -> casadi::SX  
+      
+    ::casadi::SX dx = ::casadi::SX::mtimes(J_sx, v_sx);  
+    ::casadi::SX x = ::casadi::SX::vertcat({q_sx, v_sx});  
+      
+    _arm.jac_h = ::casadi::Function("hand_jac", {x}, {dx}, {"x"}, {"spatial_vel"});
+};
+
+void
+baseNMPC::getNewData(void)
+{
+    using namespace pinocchio;
+    for (auto& _arm : armList) 
+    {
+        _arm.data = Data(_arm.model);
+    }
+};
+
+void
+baseNMPC::addArmToList(
+        const std::string & modelpath, 
+        const std::vector<std::string> & joints_to_use, 
+        const std::string & prefix
+        )
+{
+    icubArm _arm;
+    _arm.prefix = prefix;
+    getArmModel(modelpath, joints_to_use, prefix, _arm);
+    rnea(_arm);
+    // forwardModel(_arm);
+    inverseModel(_arm);
+    armJacobian(_arm);
+
+    armList.push_back(_arm);
+};
+/*
 void
 baseNMPC::forwardModel(icubArm _arm)
 {
@@ -180,62 +273,4 @@ baseNMPC::forwardModel(icubArm _arm)
   
     _arm.for_dyn_f = Function("Fk", {x, u}, {xk}, {"x0", "u"}, {"xf"}).expand();  
 };
-
-void
-baseNMPC::armJacobian(icubArm _arm)
-{
-    typedef double Scalar;  
-    typedef pinocchio::ModelTpl<casadi::SX> CasadiModel;  
-    typedef pinocchio::DataTpl<casadi::SX> CasadiData; 
-
-    CasadiModel cmodel = model.cast<casadi::SX>();  
-    CasadiData cdata(cmodel);  
-
-    casadi::SX q_sx = casadi::SX::sym("q", cmodel.nq);  
-    casadi::SX v_sx = casadi::SX::sym("v", cmodel.nv);  
-
-    Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1> q =  
-    Eigen::Map<Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1>>(q_sx->data(), cmodel.nq);  
-    Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1> v =  
-    Eigen::Map<Eigen::Matrix<casadi::SX, Eigen::Dynamic, 1>>(v_sx->data(), cmodel.nv);  
-
-    pinocchio::Data::Matrix6x J(6, cmodel.nv);  
-    J.setZero();  
-    pinocchio::computeFrameJacobian(cmodel, cdata, q, frameID, pinocchio::WORLD, J);  
-
-    casadi::SX J_sx;  
-    pinocchio::casadi::copy(J, J_sx);  
-
-    casadi::SX dx = casadi::SX::mtimes(J_sx, v_sx);  
-    casadi::SX x = casadi::SX::vertcat({q_sx, v_sx});  
-
-    _arm.jac_h = casadi::Function("hand_jac", {x}, {dx}, {"x"}, {"spatial_vel"});  
-};
-
-void
-baseNMPC::getNewData(void)
-{
-    using namespace pinocchio;
-    for (const auto& _arm : armList) 
-    {
-        _arm.data = Data(_arm.model);
-    }
-};
-
-void
-baseNMPC::addArmToList(
-        const std::string & modelpath, 
-        const std::vector<std::string> & joints_to_use, 
-        const std::string & prefix
-        )
-{
-    icubArm _arm;
-    _arm.prefix = prefix;
-    getArmModel(modelpath, joints_to_use, prefix);
-    rnea(_arm);
-    forwardModel(_arm);
-    inverseModel(_arm);
-    armJacobian(_arm);
-
-    armList.push_back(_arm);
-};
+*/

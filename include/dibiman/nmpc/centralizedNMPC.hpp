@@ -1,16 +1,13 @@
-#ifndef __dibiman_base_nmpc__
-#define __dibiman_base_nmpc__
+#ifndef __dibiman_centralized_nmpc__
+#define __dibiman_centralized_nmpc__
 
 #include <casadi/casadi.hpp>
-#include "pinocchio/algorithm/joint-configuration.hpp"  
-#include "pinocchio/algorithm/kinematics.hpp"  
-#include "pinocchio/algorithm/jacobian.hpp"  
 
 #include "dibiman/nmpc/baseNMPC.hpp"
 
 namespace dibiman {
     class centralizedNMPC: public baseNMPC {
-        auto optimizer = casadi::Opti();
+        casadi::Opti optimizer;
 
         /* right arm variables */
         std::vector<casadi::MX> Xr;
@@ -18,9 +15,9 @@ namespace dibiman {
         std::vector<casadi::MX> Ur;
 
         /* right hand parameters */
-        casadi::MX x0_r = optimizer.parameter();
-        casadi::MX xref_r = optimizer.parameter();
-        casadi::MX uref_r = optimizer.parameter();
+        casadi::MX x0_r;
+        casadi::MX xref_r;
+        casadi::MX uref_r;
 
         /* left hand variables */
         std::vector<casadi::MX> Xl;
@@ -28,9 +25,9 @@ namespace dibiman {
         std::vector<casadi::MX> Ul;
 
         /* left hand parameters */
-        casadi::MX x0_l = optimizer.parameter();
-        casadi::MX xref_l = optimizer.parameter();
-        casadi::MX uref_l = optimizer.parameter();
+        casadi::MX x0_l;
+        casadi::MX xref_l;
+        casadi::MX uref_l;
 
         public:
             centralizedNMPC(
@@ -39,10 +36,10 @@ namespace dibiman {
                     const std::vector<std::string>& arm_prefixes
                     );
 
-            void createOCP(void) {};
+            void createOCP(void) override;
 
-            void solve(void) {};
+            void solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values) override;
     };
-}
+};
   
-#endif //__dibiman_base_nmpc__
+#endif //__dibiman_centralized_nmpc__

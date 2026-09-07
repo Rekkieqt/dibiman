@@ -2,6 +2,7 @@
 #define __dibiman_arm__
 
 #include <casadi/casadi.hpp>
+#include "pinocchio/algorithm/model.hpp"
   
 namespace dibiman 
 {

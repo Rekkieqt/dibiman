@@ -10,31 +10,31 @@
   
 namespace dibiman {
     class baseNMPC {
-        /* ocp horizon */
-        int H;
+        protected:
+            /* ocp horizon */
+            int H;
 
-        /* dimensions of state variables */
-        int nx;
-        int nu;
-        int na;
+            /* dimensions of state variables */
+            int nx;
+            int nu;
+            int na;
 
-        /* discretization step */
-        double dt;
+            /* discretization step */
+            double dt;
 
-        std::vector<icubArm> armList;
-
+            std::vector<icubArm> armList;
         public:
             pinocchio::Model::ConfigVectorType inverseKinematics(
-                const std::string & prefix,
+                const pinocchio::Model & model,  
                 const pinocchio::Model::ConfigVectorType & q0,
                 const pinocchio::SE3 & Href,
                 const pinocchio::FrameIndex frame_id,
-                const std::string & target = "full");
+                const std::string & target);
 
             void getArmModel(
                 const std::string & modelpath,
+                const std::vector<std::string> & joints_to_use,
                 const std::string & prefix,
-                const std::vector<std::string> & joints,
                 icubArm _arm
                 );
 
@@ -42,7 +42,7 @@ namespace dibiman {
 
             void inverseModel(icubArm _arm);
 
-            void forwardModel(icubArm _arm);
+            /* void forwardModel(icubArm _arm); */
 
             void armJacobian(icubArm _arm);
 
@@ -52,9 +52,11 @@ namespace dibiman {
                     const std::string & prefix
                     );
 
-            virtual casadi::Opti createOCP(void) = 0;
+            void getNewData(void);
 
-            virtual casadi::Opti solve(void) = 0;
+            virtual void createOCP(void) = 0;
+
+            virtual void solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values) = 0;
     };
 };
 #endif //__dibiman_base_nmpc__

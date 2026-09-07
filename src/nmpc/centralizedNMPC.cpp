@@ -1,5 +1,6 @@
-#include "dibiman/nmpc/baseNMPC.hpp"
 #include <casadi/casadi.hpp>
+#include "dibiman/nmpc/baseNMPC.hpp"
+#include "dibiman/nmpc/centralizedNMPC.hpp"
 
 using namespace dibiman;
 
@@ -7,16 +8,27 @@ centralizedNMPC::centralizedNMPC(
         const std::string & model_path,
         const std::vector<std::string>& joints_to_use,
         const std::vector<std::string>& arm_prefixes
-        )
+        ) :
+    optimizer("nlp") 
 {
+    H = 50;
+    dt = 0.05f;
     for (const auto& prefix : arm_prefixes) 
     {
         addArmToList(model_path, joints_to_use, prefix);
     }
+
+    x0_r = optimizer.parameter(nx);
+    xref_r = optimizer.parameter(nx);
+    uref_r = optimizer.parameter(nu);
+
+    x0_l = optimizer.parameter(nx);
+    xref_l = optimizer.parameter(nx);
+    uref_l = optimizer.parameter(nu);
 }
 
 void 
-centralizedNMPC::rneaSolver(void) {  
+centralizedNMPC::createOCP(void) {  
     using namespace casadi;  
   
     for (int k = 0; k < H; ++k) {  
@@ -39,13 +51,13 @@ centralizedNMPC::rneaSolver(void) {
   
     MX obj = 0;  
     for (int i = 0; i < H; ++i) {  
-        obj += mtimes({(Xr[i+1] - xref_r).T(), Qx, Xr[i+1] - xref_r});  
-        obj += mtimes({(Ur[i]   - uref_r).T(), R,  Ur[i]   - uref_r});  
-        obj += mtimes({Ar[i].T(), Qa, Ar[i]});  
+        obj += MX::mtimes({(Xr[i+1] - xref_r).T(), Qx, Xr[i+1] - xref_r});  
+        obj += MX::mtimes({(Ur[i]   - uref_r).T(), R,  Ur[i]   - uref_r});  
+        obj += MX::mtimes({Ar[i].T(), Qa, Ar[i]});  
   
-        obj += mtimes({(Xl[i+1] - xref_l).T(), Qx, Xl[i+1] - xref_l});  
-        obj += mtimes({(Ul[i]   - uref_l).T(), R,  Ul[i]   - uref_l});  
-        obj += mtimes({Al[i].T(), Qa, Al[i]});  
+        obj += MX::mtimes({(Xl[i+1] - xref_l).T(), Qx, Xl[i+1] - xref_l});  
+        obj += MX::mtimes({(Ul[i]   - uref_l).T(), R,  Ul[i]   - uref_l});  
+        obj += MX::mtimes({Al[i].T(), Qa, Al[i]});  
     }  
   
     optimizer.subject_to(Xr[0] == x0_r);  
@@ -75,14 +87,10 @@ centralizedNMPC::rneaSolver(void) {
 };
 
 void
-centralizedNMPC::solve(
-    const casadi::DM& x0r, const casadi::DM& x0l,  
-    const casadi::DM& xRefr, const casadi::DM& xRefl,  
-    const casadi::DM& uRefr, const casadi::DM& uRefl
-    ) 
+centralizedNMPC::solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values)
 {  
     using namespace casadi;
-  
+    /*
     optimizer.set_value(x0_r, x0r);
     optimizer.set_value(xref_r, xRefr);  
     optimizer.set_value(uref_r, uRefr);  
@@ -90,6 +98,7 @@ centralizedNMPC::solve(
     optimizer.set_value(x0_l, x0l);
     optimizer.set_value(xref_l, xRefl);
     optimizer.set_value(uref_l, uRefl);
+    */
   
     OptiSol solution = optimizer.solve();  
   
