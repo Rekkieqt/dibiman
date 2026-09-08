@@ -8,16 +8,19 @@ to-do...
 
 ## Thesis
 
-to-do... link to thesis.
+to-do...
 
 ## Dependencies
 todo...
 
 pinocchio
+gazebo
 casadi
-robotology-superbuild
+YARP
+YCM
 
 ## Installation
 
 todo...
 
+## Simulation
