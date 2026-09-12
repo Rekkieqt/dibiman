@@ -32,8 +32,9 @@ namespace dibiman {
         public:
             centralizedNMPC(
                     const std::string& model_path,
-                    const std::vector<std::string>& joints_to_use,
-                    const std::vector<std::string>& arm_prefixes
+                    const std::vector<std::vector<std::string>> & joints_to_use,
+                    const std::vector<std::string>& list_ee_frame_names,
+                    const std::vector<std::string>& ids
                     );
 
             void createOCP(void) override;

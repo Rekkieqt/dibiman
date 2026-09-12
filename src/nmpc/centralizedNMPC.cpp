@@ -6,25 +6,28 @@ using namespace dibiman;
 
 centralizedNMPC::centralizedNMPC(
         const std::string & model_path,
-        const std::vector<std::string>& joints_to_use,
-        const std::vector<std::string>& arm_prefixes
+        const std::vector<std::vector<std::string>> & joints_to_use,
+        const std::vector<std::string>& list_ee_frame_names,
+        const std::vector<std::string>& ids
         ) :
     optimizer("nlp") 
 {
     H = 50;
     dt = 0.05f;
-    for (const auto& prefix : arm_prefixes) 
+    int i = 0;
+    for (const auto& id : ids) 
     {
-        addArmToList(model_path, joints_to_use, prefix);
+        addArmToList(model_path, joints_to_use[i], list_ee_frame_names[i], id);
+        i++;
     }
 
-    x0_r = optimizer.parameter(nx);
-    xref_r = optimizer.parameter(nx);
-    uref_r = optimizer.parameter(nu);
+    // x0_r = optimizer.parameter(nx);
+    // xref_r = optimizer.parameter(nx);
+    // uref_r = optimizer.parameter(nu);
 
-    x0_l = optimizer.parameter(nx);
-    xref_l = optimizer.parameter(nx);
-    uref_l = optimizer.parameter(nu);
+    // x0_l = optimizer.parameter(nx);
+    // xref_l = optimizer.parameter(nx);
+    // uref_l = optimizer.parameter(nu);
 }
 
 void 

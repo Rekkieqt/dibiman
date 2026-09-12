@@ -197,11 +197,11 @@ int main(int argc, char **argv)
     std::vector<std::string> prefixes = {"r_", "l_"};
 
     /* nmpc object init */
-    dibiman::centralizedNMPC manip_controller(
-        urdf_filename,
-        joints_list,
-        prefixes
-        );
+    // dibiman::centralizedNMPC manip_controller(
+    //     urdf_filename,
+    //     joints_list,
+    //     prefixes
+    //     );
 
     /* remote controller */
     int idx_joints[] = {0, 1, 2, 3, 4, 5, 6};
@@ -210,9 +210,9 @@ int main(int argc, char **argv)
 
     /* Controlled joints */
     double* q_sens = new double[joints]; /* joint positions */
-    double* v_sens = new double[joints]; /* joint velocities */
-    double* a_sens = new double[joints]; /* joint accelerations */
-    double* u_sens = new double[joints]; /* tau -> torque at the joints */ 
+    // double* v_sens = new double[joints]; /* joint velocities */
+    // double* a_sens = new double[joints]; /* joint accelerations */
+    // double* u_sens = new double[joints]; /* tau -> torque at the joints */ 
 
     /* dynamic link between double arrays and eigen arrays */
     Eigen::Map<Eigen::VectorXd> q_sens_Vec(q_sens, joints);
@@ -226,7 +226,7 @@ int main(int argc, char **argv)
     logHeader(file, joints);
 
     /* set control mode for arm */
-    int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
+    // int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};
     // controlMode->setControlModes(joints, idx_joints, modes);
 
     /* log the ref angles */

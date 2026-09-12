@@ -2,6 +2,7 @@
 #define __dibiman_arm__
 
 #include <casadi/casadi.hpp>
+
 #include "pinocchio/algorithm/model.hpp"
   
 namespace dibiman 
@@ -9,7 +10,7 @@ namespace dibiman
     class icubArm 
     {
         public:
-            std::string prefix;
+            std::string id;
 
             pinocchio::Model model;
             pinocchio::Data data;

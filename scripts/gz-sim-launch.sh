@@ -13,28 +13,27 @@ export ICUB_MODEL_PATH="/home/ubuntu/dibiman/conf/model.urdf"
 export YARP_QUIET=1
 
 # Script variables
-GAZEBO_WORLD_PATH="/home/ubuntu/gazebo_models/worlds/icub-gazebo-world.sdf"
-LEFT_ARM_DOT_INI_PATH="/home/ubuntu/dibiman/conf/left_arm.ini"
-RIGHT_ARM_DOT_INI_PATH="/home/ubuntu/dibiman/conf/right_arm.ini"
-BINARY_PATH="/home/ubuntu/dibiman/build/biman"
+GAZEBO_WORLD_PATH="$PWD/../gazebo/table-world.sdf"
+LEFT_ARM_DOT_INI_PATH="$PWD/../conf/left_arm.ini"
+RIGHT_ARM_DOT_INI_PATH="$PWD/../conf/right_arm.ini"
+BINARY_PATH="$PWD/../build/biman"
 
 # Start servers
 yarpserver --write --silent &
 YARPSERVER_PID=$!
 
 if [[ $1 ]]; then
-  gazebo --minimal_comms $GAZEBO_WORLD_PATH &
+  gz sim $GAZEBO_WORLD_PATH &
   GZSERVER_PID=$!
 else 
-  gzserver --minimal_comms $GAZEBO_WORLD_PATH &
+  gz sim -s $GAZEBO_WORLD_PATH &
   GZSERVER_PID=$!
 fi
 
 # Wait for initialization
-sleep 3
+sleep 5
 
 # Run binary
 ${BINARY_PATH} "--from" $LEFT_ARM_DOT_INI_PATH
 
 # Cleanup is automatic via trap
-

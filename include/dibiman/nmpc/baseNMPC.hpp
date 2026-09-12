@@ -2,6 +2,7 @@
 #define __dibiman_base_nmpc__
 
 #include <casadi/casadi.hpp>
+
 #include "pinocchio/algorithm/joint-configuration.hpp"  
 #include "pinocchio/algorithm/kinematics.hpp"  
 #include "pinocchio/algorithm/jacobian.hpp"  
@@ -23,6 +24,7 @@ namespace dibiman {
             double dt;
 
             std::vector<icubArm> armList;
+
         public:
             pinocchio::Model::ConfigVectorType inverseKinematics(
                 const pinocchio::Model & model,  
@@ -31,25 +33,23 @@ namespace dibiman {
                 const pinocchio::FrameIndex frame_id,
                 const std::string & target);
 
-            void getArmModel(
+            pinocchio::Model getArmModel(
                 const std::string & modelpath,
-                const std::vector<std::string> & joints_to_use,
-                const std::string & prefix,
-                icubArm _arm
-                );
+                const std::vector<std::string> & list_joints_to_use);
 
-            void rnea(icubArm _arm);
+            casadi::Function rnea(const icubArm & _arm);
 
-            void inverseModel(icubArm _arm);
+            casadi::Function inverseModel(const int n_dim);
 
             /* void forwardModel(icubArm _arm); */
 
-            void armJacobian(icubArm _arm);
+            casadi::Function armJacobian(const icubArm & _arm);
 
             void addArmToList(
                     const std::string & modelpath, 
                     const std::vector<std::string> & joints_to_use, 
-                    const std::string & prefix
+                    const std::string & name_ee_frame,
+                    const std::string & id
                     );
 
             void getNewData(void);
