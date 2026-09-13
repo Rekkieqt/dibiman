@@ -8,34 +8,20 @@
 #include <algorithm>
 #include <filesystem>
 #include <stdio.h>
-#include <math.h>
 
 /* Pinocchio libraries */
-#include "pinocchio/spatial/explog.hpp"
-
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/frames.hpp"
-#include "pinocchio/algorithm/jacobian.hpp"
-#include "pinocchio/algorithm/rnea.hpp"
-#include "pinocchio/algorithm/crba.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
-
-#include "pinocchio/parsers/urdf.hpp"
 
 /* Casadi and Eigen */
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
 
 /* NMPC libraries */
-#include "dibiman/nmpc/baseNMPC.hpp"
 #include "dibiman/nmpc/centralizedNMPC.hpp"
 
 using namespace pinocchio;
-
-template<typename T>
-bool is_in_vector(const std::vector<T> & vector, const T & elt) {
-  return vector.end() != std::find(vector.begin(), vector.end(), elt);
-}
 
 int main(int argc, char **argv)
 {
@@ -43,7 +29,7 @@ int main(int argc, char **argv)
     /* arm joints */
     const std::vector<std::string> joint_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "wrist_yaw"};
     const std::vector<std::string> ids = {"right_icub_arm", "left_icub_arm"};
-    const std::vector<std::string> end_effector_frames = {"r_hand", "l_hand"};
+    const std::vector<std::string> end_effector_frame_names = {"r_hand", "l_hand"};
     const std::string urdf_path = static_cast<std::string>(std::filesystem::current_path()) + "/../conf/model.urdf";
 
     std::vector<std::string> right_arm_joint_list;
@@ -65,7 +51,7 @@ int main(int argc, char **argv)
     dibiman::centralizedNMPC manip_controller(
         urdf_path,
         list_of_joints,
-        end_effector_frames,
+        end_effector_frame_names,
         ids
         );
   

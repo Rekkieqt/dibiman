@@ -23,11 +23,13 @@ namespace dibiman {
             /* discretization step */
             double dt;
 
+            /* list of manipulator data type */
             std::vector<icubArm> armList;
 
         public:
             pinocchio::Model::ConfigVectorType inverseKinematics(
                 const pinocchio::Model & model,  
+                pinocchio::Data & data,  
                 const pinocchio::Model::ConfigVectorType & q0,
                 const pinocchio::SE3 & Href,
                 const pinocchio::FrameIndex frame_id,
@@ -53,6 +55,8 @@ namespace dibiman {
                     );
 
             void getNewData(void);
+
+            void verifyManipulatorList(void);
 
             virtual void createOCP(void) = 0;
 

@@ -20,7 +20,7 @@ namespace dibiman
 
             casadi::Function rnea_h = casadi::Function();
             casadi::Function inv_dyn_f = casadi::Function();
-            casadi::Function for_dyn_f = casadi::Function();
+            // casadi::Function for_dyn_f = casadi::Function();
             casadi::Function jac_h = casadi::Function();
     };
 

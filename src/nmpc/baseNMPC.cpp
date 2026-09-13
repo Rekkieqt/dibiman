@@ -7,6 +7,7 @@
 #include "pinocchio/algorithm/rnea.hpp"  
 #include "pinocchio/algorithm/frames.hpp"  
 #include "pinocchio/algorithm/model.hpp"  
+#include "pinocchio/algorithm/default-check.hpp"
 
 #include "pinocchio/parsers/urdf.hpp"  
 
@@ -23,13 +24,13 @@ using namespace dibiman;
 pinocchio::Model::ConfigVectorType 
 baseNMPC::inverseKinematics(  
     const pinocchio::Model & model,  
+    pinocchio::Data & data,  
     const pinocchio::Model::ConfigVectorType & q0,  
     const pinocchio::SE3 & Href,  
     const pinocchio::FrameIndex frame_id,  
     const std::string & target = "full")  
 {  
     using namespace pinocchio;
-    Data data(model);  
     const double eps = 1e-6;  
     const int IT_MAX = 4000;  
     const double DT = 1e-1;  
@@ -147,7 +148,7 @@ baseNMPC::inverseModel(const int n_dim)
     SX vk = v + dt * a;  
     SX xk = vertcat(qk, vk);  
   
-    return Function("Fk", {x, a}, {xk}, {"x", "a"}, {"xk"}).expand();  
+    return Function("simple_dyn", {x, a}, {xk}, {"x", "a"}, {"xk"}).expand();  
 };
 
 casadi::Function
@@ -186,7 +187,7 @@ baseNMPC::rnea(const icubArm & _arm)
     for (Eigen::Index k = 0; k < _arm.model.nv; ++k)  
       tau_ad(k) = ad_data.tau[k];  
     
-    return ::casadi::Function("eval_rnea", ::casadi::SXVector{cs_q, cs_v, cs_a}, ::casadi::SXVector{tau_ad});  
+    return ::casadi::Function("rnea", ::casadi::SXVector{cs_q, cs_v, cs_a}, ::casadi::SXVector{tau_ad});  
 
     /*
     Function rneaJac("jac_rnea",  
@@ -229,7 +230,7 @@ baseNMPC::armJacobian(const icubArm & _arm)
     ::casadi::SX dx = ::casadi::SX::mtimes(J_sx, v_sx);  
     ::casadi::SX x = ::casadi::SX::vertcat({q_sx, v_sx});  
       
-    return ::casadi::Function("hand_jac", {x}, {dx}, {"x"}, {"spatial_vel"});
+    return ::casadi::Function("jac_x_vel", {x}, {dx}, {"x"}, {"spatial_vel"});
 };
 
 void
@@ -262,6 +263,45 @@ baseNMPC::addArmToList(
 
     armList.push_back(_arm);
 };
+
+void
+baseNMPC::verifyManipulatorList(void)
+{
+    for (const auto & _arm : armList)
+    {
+        std::cout << "List manipulator identifier: " << _arm.id << "\n";
+        std::cout << "Hand pinocchio id: " << _arm.hand_id << std::endl;
+
+        std::cout << _arm.model.check(pinocchio::DEFAULT_CHECKERS);
+        std::cout << _arm.model.check(_arm.data) << std::endl;
+        /*
+        std::cout << "Casadi Inverse Dynamics: " << _arm.inv_dyn_f.name() << " (n_in=" << _arm.inv_dyn_f.n_in() << ", n_out=" << _arm.inv_dyn_f.n_out() << ")\n"; 
+        std::cout << "Casadi RNEA: " << _arm.rnea_h.name() << " (n_in=" << _arm.rnea_h.n_in() << ", n_out=" << _arm.rnea_h.n_out() << ")\n"; 
+        std::cout << "Casadi Spatial Velocity (J(q) * v): " << _arm.jac_h.name() << " (n_in=" << _arm.jac_h.n_in() << ", n_out=" << _arm.jac_h.n_out() << ")\n"; 
+        */
+
+        auto printFunctionInfo = [](const std::string& label, const casadi::Function& f) {  
+            if (f.is_null()) {  
+                std::cout << label << ": NULL (not initialized)\n";  
+                return;  
+            }  
+            std::cout << label << ": " << f.name()  
+                       << " (n_in=" << f.n_in() << ", n_out=" << f.n_out() << ")\n";  
+            for (casadi_int i = 0; i < f.n_in(); ++i) {  
+                std::cout << "  in[" << i << "] " << f.name_in(i) << ": "  
+                           << f.size1_in(i) << "x" << f.size2_in(i) << "\n";  
+            }  
+            for (casadi_int i = 0; i < f.n_out(); ++i) {  
+                std::cout << "  out[" << i << "] " << f.name_out(i) << ": "  
+                           << f.size1_out(i) << "x" << f.size2_out(i) << "\n";  
+            }  
+        };  
+          
+        printFunctionInfo("Casadi Inverse Dynamics", _arm.inv_dyn_f);  
+        printFunctionInfo("Casadi RNEA", _arm.rnea_h);  
+        printFunctionInfo("Casadi Spatial Velocity (J(q) * v)", _arm.jac_h);
+    }
+}
 /*
 void
 baseNMPC::forwardModel(icubArm _arm)
