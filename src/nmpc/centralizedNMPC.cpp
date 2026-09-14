@@ -1,6 +1,7 @@
 #include <casadi/casadi.hpp>
 #include "dibiman/nmpc/baseNMPC.hpp"
 #include "dibiman/nmpc/centralizedNMPC.hpp"
+#include "dibiman/utils/utils.hpp"
 
 using namespace dibiman;
 
@@ -26,6 +27,8 @@ centralizedNMPC::centralizedNMPC(
     nx = 2 * na;
     verifyManipulatorList();
 
+    initSX_OCP();
+
     // x0_r = optimizer.parameter(nx);
     // xref_r = optimizer.parameter(nx);
     // uref_r = optimizer.parameter(nu);
@@ -35,7 +38,7 @@ centralizedNMPC::centralizedNMPC(
     // uref_l = optimizer.parameter(nu);
 }
 
-casadi::Function
+void
 centralizedNMPC::initSX_OCP(void) {  
     using namespace casadi;  
 
@@ -65,7 +68,7 @@ centralizedNMPC::initSX_OCP(void) {
     g.push_back(Xr[0] - x0_r);
     g.push_back(Xl[0] - x0_l);
 
-  // Dynamics + Jacobian binding loop  
+    // Dynamics + Jacobian binding loop  
     for (int k = 0; k < H; ++k) 
     {  
         SX xr_next = armList[0].inv_dyn_f(std::vector<SX>{Xr[k], Ar[k]}).at(0);  
@@ -87,14 +90,14 @@ centralizedNMPC::initSX_OCP(void) {
 
     for (int i = 0; i < H; ++i) 
     {
-        obj += SX::mtimes({(Xr[i+1] - xref_r).T(), Qx, Xr[i+1] - xref_r});  
-        obj += SX::mtimes({(Ur[i]   - uref_r).T(), Ru,  Ur[i]   - uref_r});  
-        obj += SX::mtimes({Ar[i].T(), Qa, Ar[i]});  
+        obj += SX::mtimes({(Xr[i+1] - xref_r).T(), Qx, Xr[i+1] - xref_r});
+        obj += SX::mtimes({(Ur[i]   - uref_r).T(), Ru,  Ur[i]   - uref_r});
+        obj += SX::mtimes({Ar[i].T(), Qa, Ar[i]});
   
-        obj += SX::mtimes({(Xl[i+1] - xref_l).T(), Qx, Xl[i+1] - xref_l});  
-        obj += SX::mtimes({(Ul[i]   - uref_l).T(), Ru,  Ul[i]   - uref_l});  
-        obj += SX::mtimes({Al[i].T(), Qa, Al[i]});  
-    }  
+        obj += SX::mtimes({(Xl[i+1] - xref_l).T(), Qx, Xl[i+1] - xref_l});
+        obj += SX::mtimes({(Ul[i]   - uref_l).T(), Ru,  Ul[i]   - uref_l});
+        obj += SX::mtimes({Al[i].T(), Qa, Al[i]});
+    }
   
     SX X = vertcat(vertcat(Xr), vertcat(Xl), vertcat(Ur), vertcat(Ul), vertcat(Ar), vertcat(Al));  
     SX P = vertcat(x0_r, xref_r, uref_r, x0_l, xref_l, uref_l);  
@@ -107,7 +110,7 @@ centralizedNMPC::initSX_OCP(void) {
     solver_options["ipopt.print_level"] = 0;  
     solver_options["ipopt.tol"] = 1e-3;  
   
-    return nlpsol("solver", "ipopt", nlp, solver_options);  
+    solver = nlpsol("solver", "ipopt", nlp, solver_options);  
 };
 
 void 
@@ -169,24 +172,48 @@ centralizedNMPC::createOCP(void) {
     optimizer.solver("ipopt", solver_options);  
 };
 
-void
-centralizedNMPC::solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values)
+std::map<std::string, casadi::DM>
+centralizedNMPC::solve(const std::map<std::string, baseNMPC::armData> & manipulator_datas)
 {  
     using namespace casadi;
     /*
-    optimizer.set_value(x0_r, x0r);
-    optimizer.set_value(xref_r, xRefr);  
-    optimizer.set_value(uref_r, uRefr);  
-  
-    optimizer.set_value(x0_l, x0l);
-    optimizer.set_value(xref_l, xRefl);
-    optimizer.set_value(uref_l, uRefl);
+       Eigen::VectorXd ex = ...;
+       std::vector<double> temp(ex.data(), ex.data() + ex.size()) 
+       DM ex_dm = DM(temp);
     */
+    std::vector<DM> p_val_list;
+    for (auto arm = armList.begin();
+            arm != armList.end();
+            ++arm)
+    {
+        const baseNMPC::armData & m_data = manipulator_datas.at(arm->id);
+
+        const casadi_int nx = m_data.size;
+        DM x0_dm = DM::zeros(nx);
+        std::memcpy(x0_dm.ptr(), m_data.x0, sizeof(double) * nx);
+
+        DM xref_dm = eigenToDM(m_data.xref);
+        DM uref_dm = eigenToDM(m_data.uref);
+
+        // Eigen::VectorXd xref = manip_data[arm.id].xref; // Eigen::VectorXd
+        // Eigen::VectorXd uref = manip_data[arm.id].uref; // Eigen::VectorXd
+        // double* x0 = manip_data[arm.id].x0; // double*
+        p_val_list.push_back(x0_dm);
+        p_val_list.push_back(xref_dm);
+        p_val_list.push_back(uref_dm);
+    }
   
-    OptiSol solution = optimizer.solve();  
-  
-    DM u_r_star = solution.value(Ur[0]);  
-    DM u_l_star = solution.value(Ul[0]);  
-    /* Needs to be pointer assigned to the outside */
-    // return {u_r_star, u_l_star};  
+    // DM x0 = DM::zeros(X.size1());
+    DM p_val = vertcat(p_val_list);
+
+    DMDict arg = {{"p", p_val}};
+    DMDict res = solver(arg);
+
+    DM x_opt = res.at("x");
+    // DM f_opt = res.at("f");
+    std::map<std::string, DM> u_star;
+    u_star[armList[0].id] = x_opt(Slice(nx + na, nx + na + nu)); // werid
+    u_star[armList[1].id] = x_opt(Slice(nx + na, nx + na + nu)); // werid
+
+    return u_star;
 };

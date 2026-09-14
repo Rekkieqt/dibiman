@@ -1,8 +1,6 @@
 /* yarp libraries */
 #include "yarp/os/Bottle.h"
 #include "yarp/os/BufferedPort.h"
-#include "yarp/os/Log.h"
-#include <vector>
 #include <yarp/os/Network.h>
 #include <yarp/os/Time.h>
 #include <yarp/os/ResourceFinder.h>
@@ -12,11 +10,9 @@
 #include <yarp/dev/IPositionControl.h>
 #include <yarp/dev/IEncoders.h>
 #include <yarp/dev/IAxisInfo.h>
-#include <yarp/sig/Matrix.h>
-#include <yarp/sig/Vector.h>
-#include <yarp/math/Math.h>
 
 /* cpp libraries */
+#include <vector>
 #include <cstddef>
 #include <fstream>
 #include <iostream>
@@ -26,37 +22,24 @@
 #include <algorithm>
 #include <stdio.h>
 #include <math.h>
+#include <filesystem>
 
 /* Pinocchio libraries */
-//#include "pinocchio/multibody/sample-models.hpp"
-#include "pinocchio/spatial/explog.hpp"
 
 #include "pinocchio/algorithm/kinematics.hpp"
-#include "pinocchio/algorithm/frames.hpp"
-#include "pinocchio/algorithm/jacobian.hpp"
-#include "pinocchio/algorithm/rnea.hpp"
-#include "pinocchio/algorithm/crba.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
 
-#include "pinocchio/parsers/urdf.hpp"
 
 /* Casadi and Eigen */
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
 
 /* NMPC libraries */
-#include "dibiman/nmpc/baseNMPC.hpp"
 #include "dibiman/nmpc/centralizedNMPC.hpp"
 
 using namespace yarp::os;
 using namespace yarp::dev;
-using namespace yarp::math;
 using namespace pinocchio;
-
-template<typename T>
-bool is_in_vector(const std::vector<T> & vector, const T & elt) {
-  return vector.end() != std::find(vector.begin(), vector.end(), elt);
-}
 
 /* logging function */
 void logData(std::fstream & logfile, Eigen::Ref<Eigen::VectorXd> tau, Eigen::Ref<Eigen::VectorXd> qread, int size) {
@@ -189,19 +172,35 @@ int main(int argc, char **argv)
         yarp::os::Time::delay(3);
     }
 
-    /* Casadi Test */
-    casadi::SX q = casadi::SX::sym("q", 6);
     /* +++++++++++ ARM CONTROL START ++++++++++++++*/
     /* arm joints */
-    std::vector<std::string> joints_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "_wrist_yaw"};
-    std::vector<std::string> prefixes = {"r_", "l_"};
+    const std::vector<std::string> joint_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "wrist_yaw"};
+    const std::vector<std::string> ids = {"right_icub_arm", "left_icub_arm"};
+    const std::vector<std::string> end_effector_frame_names = {"r_hand", "l_hand"};
+    const std::string urdf_path = static_cast<std::string>(std::filesystem::current_path()) + "/../conf/model.urdf";
+
+    std::vector<std::string> right_arm_joint_list;
+    std::vector<std::string> left_arm_joint_list;
+
+    for(auto it = joint_list.begin();
+            it != joint_list.end();
+            ++it)
+    {
+        right_arm_joint_list.push_back("r_" + *it);
+        left_arm_joint_list.push_back("l_" + *it);
+    }
+
+    std::vector<std::vector<std::string>> list_of_joints;
+    list_of_joints.push_back(right_arm_joint_list);
+    list_of_joints.push_back(left_arm_joint_list);
 
     /* nmpc object init */
-    // dibiman::centralizedNMPC manip_controller(
-    //     urdf_filename,
-    //     joints_list,
-    //     prefixes
-    //     );
+    dibiman::centralizedNMPC manip_controller(
+        urdf_path,
+        list_of_joints,
+        end_effector_frame_names,
+        ids
+        );
 
     /* remote controller */
     int idx_joints[] = {0, 1, 2, 3, 4, 5, 6};

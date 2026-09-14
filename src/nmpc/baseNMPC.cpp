@@ -36,10 +36,10 @@ baseNMPC::inverseKinematics(
     const double DT = 1e-1;  
     const double damp = 1e-12;  
     
-    Eigen::VectorXd q = q0;  
-    Eigen::VectorXd err(target == "full" ? 6 : 3);  
+    Eigen::VectorXd q = q0;
+    Eigen::VectorXd err(target == "full" ? 6 : 3);
     Eigen::MatrixXd J(6, model.nv);  
-    bool success = false;  
+    bool success = false;
     int i = 0;  
     
     for (;;)  
@@ -131,24 +131,24 @@ baseNMPC::getArmModel(const std::string & modelpath,
 };
 
 casadi::Function
-baseNMPC::inverseModel(const int n_dim) 
+baseNMPC::inverseModel(const int n_dim)
 {
-    using namespace casadi;  
+    using namespace casadi;
   
     // Dynamic variables  
-    SX q = SX::sym("q", n_dim);  
-    SX v = SX::sym("v", n_dim);  
-    SX a = SX::sym("a", n_dim);  
+    SX q = SX::sym("q", n_dim);
+    SX v = SX::sym("v", n_dim);
+    SX a = SX::sym("a", n_dim);
   
     // Simplified dynamics  
-    SX x = vertcat(q, v);  
-    SX dx = vertcat(v, a);  
+    SX x = vertcat(q, v);
+    SX dx = vertcat(v, a);
   
-    SX qk = q + dt * v;  
-    SX vk = v + dt * a;  
-    SX xk = vertcat(qk, vk);  
+    SX qk = q + dt * v;
+    SX vk = v + dt * a;
+    SX xk = vertcat(qk, vk);
   
-    return Function("simple_dyn", {x, a}, {xk}, {"x", "a"}, {"xk"}).expand();  
+    return Function("simple_dyn", {x, a}, {xk}, {"x", "a"}, {"xk"}).expand();
 };
 
 casadi::Function
@@ -187,7 +187,9 @@ baseNMPC::rnea(const icubArm & _arm)
     for (Eigen::Index k = 0; k < _arm.model.nv; ++k)  
       tau_ad(k) = ad_data.tau[k];  
     
-    return ::casadi::Function("rnea", ::casadi::SXVector{cs_q, cs_v, cs_a}, ::casadi::SXVector{tau_ad});  
+    ::casadi::SX cs_x = ::casadi::SX::vertcat({cs_q, cs_v});
+    return ::casadi::Function("rnea", ::casadi::SXVector{cs_x, cs_a}, ::casadi::SXVector{tau_ad});  
+    //return ::casadi::Function("rnea", ::casadi::SXVector{cs_q, cs_v, cs_a}, ::casadi::SXVector{tau_ad});  
 
     /*
     Function rneaJac("jac_rnea",  
@@ -257,7 +259,7 @@ baseNMPC::addArmToList(
     _arm.data = pinocchio::Data(_arm.model);
     _arm.hand_id = _arm.model.getFrameId(name_ee_frame);
     _arm.rnea_h = rnea(_arm);
-    // forwardModel(_arm);
+    _arm.for_dyn_f = forwardModel(_arm);
     _arm.inv_dyn_f = inverseModel(_arm.model.nv);
     _arm.jac_h = armJacobian(_arm);
 
@@ -274,11 +276,6 @@ baseNMPC::verifyManipulatorList(void)
 
         std::cout << _arm.model.check(pinocchio::DEFAULT_CHECKERS);
         std::cout << _arm.model.check(_arm.data) << std::endl;
-        /*
-        std::cout << "Casadi Inverse Dynamics: " << _arm.inv_dyn_f.name() << " (n_in=" << _arm.inv_dyn_f.n_in() << ", n_out=" << _arm.inv_dyn_f.n_out() << ")\n"; 
-        std::cout << "Casadi RNEA: " << _arm.rnea_h.name() << " (n_in=" << _arm.rnea_h.n_in() << ", n_out=" << _arm.rnea_h.n_out() << ")\n"; 
-        std::cout << "Casadi Spatial Velocity (J(q) * v): " << _arm.jac_h.name() << " (n_in=" << _arm.jac_h.n_in() << ", n_out=" << _arm.jac_h.n_out() << ")\n"; 
-        */
 
         auto printFunctionInfo = [](const std::string& label, const casadi::Function& f) {  
             if (f.is_null()) {  
@@ -295,31 +292,68 @@ baseNMPC::verifyManipulatorList(void)
                 std::cout << "  out[" << i << "] " << f.name_out(i) << ": "  
                            << f.size1_out(i) << "x" << f.size2_out(i) << "\n";  
             }  
-        };  
+        };
           
         printFunctionInfo("Casadi Inverse Dynamics", _arm.inv_dyn_f);  
         printFunctionInfo("Casadi RNEA", _arm.rnea_h);  
         printFunctionInfo("Casadi Spatial Velocity (J(q) * v)", _arm.jac_h);
+
+        std::cout << "u dim: " << nu << "a dim: " << na << "x dim: " << nx << std::endl;
     }
 }
-/*
-void
-baseNMPC::forwardModel(icubArm _arm)
+
+casadi::Function
+baseNMPC::forwardModel(const icubArm & _arm)
 {
-    using namespace casadi;  
+    using namespace pinocchio;
+
+    typedef double Scalar;
+    typedef ::casadi::SX ADScalar;
+
+    typedef ModelTpl<Scalar> Model;
+    typedef Model::Data Data;
+
+    typedef ModelTpl<ADScalar> ADModel;
+    typedef ADModel::Data ADData;
+
+    const Model & model = _arm.model;
+    const Data & data = _arm.data;
   
-    SX u = SX::sym("tau", cmodel.nv);  
-    SX q = SX::sym("q", cmodel.nq);  
-    SX v = SX::sym("v", cmodel.nv);  
-  
-    // ABA  
-    SX ddq = cpin::aba(cmodel, cdata, q, v, u);  
-    SX x = vertcat(q, v)
-  
-    Function dx_f = Function("dx_f", {x, u}, {dx}, {"x", "u"}, {"dx"})
-  
-    SX xk = x + dt * dx_f(SXVector{x, u}).at(0);  
-  
-    _arm.for_dyn_f = Function("Fk", {x, u}, {xk}, {"x0", "u"}, {"xf"}).expand();  
+    // Pick up random configuration, velocity and acceleration vectors.
+    Eigen::VectorXd q(model.nq);
+    q = randomConfiguration(model);
+    Eigen::VectorXd v(Eigen::VectorXd::Random(model.nv));
+    Eigen::VectorXd tau(Eigen::VectorXd::Random(model.nv));
+
+    // Create CasADi model and data from model
+    typedef ADModel::ConfigVectorType ConfigVectorAD;
+    typedef ADModel::TangentVectorType TangentVectorAD;
+    ADModel ad_model = model.cast<ADScalar>();
+    ADData ad_data(ad_model);
+
+    // Create symbolic CasADi vectors
+    ::casadi::SX cs_q = ::casadi::SX::sym("q", model.nq);
+    ConfigVectorAD q_ad(model.nq);
+    q_ad = Eigen::Map<ConfigVectorAD>(static_cast<std::vector<ADScalar>>(cs_q).data(), model.nq, 1);
+
+    ::casadi::SX cs_v = ::casadi::SX::sym("v", model.nv);
+    TangentVectorAD v_ad(model.nv);
+    v_ad = Eigen::Map<TangentVectorAD>(static_cast<std::vector<ADScalar>>(cs_v).data(), model.nv, 1);
+
+    ::casadi::SX cs_tau = ::casadi::SX::sym("tau", model.nv);
+    TangentVectorAD tau_ad(model.nv);
+    tau_ad =
+    Eigen::Map<TangentVectorAD>(static_cast<std::vector<ADScalar>>(cs_tau).data(), model.nv, 1);
+
+    // Build CasADi function
+    aba(ad_model, ad_data, q_ad, v_ad, tau_ad);
+    ::casadi::SX a_ad(model.nv, 1);
+
+    for (Eigen::Index k = 0; k < model.nv; ++k)
+    a_ad(k) = ad_data.ddq[k];
+
+    ::casadi::Function eval_aba(
+    "eval_aba", ::casadi::SXVector{cs_q, cs_v, cs_tau}, ::casadi::SXVector{a_ad});
+
+    return eval_aba;
 };
-*/

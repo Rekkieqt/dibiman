@@ -23,10 +23,24 @@ namespace dibiman {
             /* discretization step */
             double dt;
 
+            /* casadi nlp solver function */
+            casadi::Function solver = casadi::Function();
+
+        public:
             /* list of manipulator data type */
             std::vector<icubArm> armList;
 
-        public:
+            struct armData {
+                double* x0 = nullptr;
+                Eigen::VectorXd uref;
+                Eigen::VectorXd xref;
+                size_t size = 0; /* keep track of alloc size */
+
+                ~armData() {
+                    delete[] x0;
+                }
+            };
+
             pinocchio::Model::ConfigVectorType inverseKinematics(
                 const pinocchio::Model & model,  
                 pinocchio::Data & data,  
@@ -43,7 +57,7 @@ namespace dibiman {
 
             casadi::Function inverseModel(const int n_dim);
 
-            /* void forwardModel(icubArm _arm); */
+            casadi::Function forwardModel(const icubArm & _arm);
 
             casadi::Function armJacobian(const icubArm & _arm);
 
@@ -60,7 +74,8 @@ namespace dibiman {
 
             virtual void createOCP(void) = 0;
 
-            virtual void solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values) = 0;
+            virtual std::map<std::string, casadi::DM> solve(const std::map<std::string, armData>&) = 0;
+
     };
 };
 #endif //__dibiman_base_nmpc__

@@ -37,11 +37,11 @@ namespace dibiman {
                     const std::vector<std::string>& ids
                     );
 
-            casadi::Function initSX_OCP(void);
+            void initSX_OCP(void);
 
             void createOCP(void) override;
 
-            void solve(const std::map<std::string, Eigen::VectorXd>& initial_and_ref_values) override;
+            std::map<std::string, casadi::DM> solve(const std::map<std::string, baseNMPC::armData>& manip_data) override;
     };
 };
   
