@@ -2,7 +2,6 @@
 #include "yarp/os/Bottle.h"
 #include "yarp/os/BufferedPort.h"
 #include <yarp/os/Network.h>
-#include <yarp/os/Time.h>
 #include <yarp/os/ResourceFinder.h>
 #include <yarp/dev/PolyDriver.h>
 #include <yarp/dev/ITorqueControl.h>
@@ -29,7 +28,6 @@
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
 
-
 /* Casadi and Eigen */
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
@@ -40,44 +38,6 @@
 using namespace yarp::os;
 using namespace yarp::dev;
 using namespace pinocchio;
-
-/* logging function */
-void logData(std::fstream & logfile, Eigen::Ref<Eigen::VectorXd> tau, Eigen::Ref<Eigen::VectorXd> qread, int size) {
-  /* log torques */
-  for (int i=0; i < size; ++i) {
-    logfile << qread[i] << ",";
-  }
-  /* log torques */
-  for (int i=0; i < size; ++i) {
-    logfile << tau[i] << ",";
-  }
-  logfile << std::endl;
-}
-
-void logHeader(std::fstream & logfile, int size) {
-  /* log readings */
-  for (int i=0; i < size; ++i) {
-    logfile << "joint_meas" << i << ",";
-  }
-  /* log torques */
-  for (int i=0; i < size; ++i) {
-    logfile << "torque " << i << ",";
-  }
-  logfile << std::endl;
-}
-
-void logRef(std::fstream & reffile, Eigen::VectorXd& qref, int size) {
-  /* log refs */
-  for (int i=0; i < size; ++i) {
-    reffile << "joint_ref" << i << ",";
-  }
-  reffile << std::endl;
-  /* log torques */
-  for (int i=0; i < size; ++i) {
-    reffile << qref[i] << ",";
-  }
-  reffile << std::endl;
-}
 
 
 int main(int argc, char **argv)
@@ -222,7 +182,7 @@ int main(int argc, char **argv)
 
     std::string logfile = "../../logs/" + partName + ".csv";
     std::fstream file(logfile, std::ios::out | std::ios::trunc);
-    logHeader(file, joints);
+    // logHeader(file, joints);
 
     /* set control mode for arm */
     // int modes[] = {VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE, VOCAB_CM_TORQUE};

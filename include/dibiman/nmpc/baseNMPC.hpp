@@ -8,6 +8,7 @@
 #include "pinocchio/algorithm/jacobian.hpp"  
 
 #include "dibiman/arm/icub-arm.hpp"
+#include "dibiman/utils/utils.hpp"
   
 namespace dibiman {
     class baseNMPC {
@@ -29,17 +30,6 @@ namespace dibiman {
         public:
             /* list of manipulator data type */
             std::vector<icubArm> armList;
-
-            struct armData {
-                double* x0 = nullptr;
-                Eigen::VectorXd uref;
-                Eigen::VectorXd xref;
-                size_t size = 0; /* keep track of alloc size */
-
-                ~armData() {
-                    delete[] x0;
-                }
-            };
 
             pinocchio::Model::ConfigVectorType inverseKinematics(
                 const pinocchio::Model & model,  
@@ -74,7 +64,7 @@ namespace dibiman {
 
             virtual void createOCP(void) = 0;
 
-            virtual std::map<std::string, casadi::DM> solve(const std::map<std::string, armData>&) = 0;
+            virtual std::map<std::string, casadi::DM> solve(const std::map<std::string, armTargetParams>&) = 0;
 
     };
 };

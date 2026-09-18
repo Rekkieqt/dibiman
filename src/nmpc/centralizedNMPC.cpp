@@ -47,17 +47,17 @@ centralizedNMPC::initSX_OCP(void) {
 
     std::vector<SX> Xr, Ur, Ar, Xl, Ul, Al;
     for (int k = 0; k < H; ++k) {  
-        Xr.push_back(SX::sym("Xr"+std::to_string(k), nx));  
-        Ur.push_back(SX::sym("Ur"+std::to_string(k), nu));  
-        Ar.push_back(SX::sym("Ar"+std::to_string(k), na));  
+        Xr.push_back(SX::sym("Xr"+std::to_string(k), nx));
+        Ur.push_back(SX::sym("Ur"+std::to_string(k), nu));
+        Ar.push_back(SX::sym("Ar"+std::to_string(k), na));
 
-        Xl.push_back(SX::sym("Xl"+std::to_string(k), nx));  
-        Ul.push_back(SX::sym("Ul"+std::to_string(k), nu));  
-        Al.push_back(SX::sym("Al"+std::to_string(k), na));  
+        Xl.push_back(SX::sym("Xl"+std::to_string(k), nx));
+        Ul.push_back(SX::sym("Ul"+std::to_string(k), nu));
+        Al.push_back(SX::sym("Al"+std::to_string(k), na));
     }  
 
-    Xr.push_back(SX::sym("Xr"+std::to_string(H), nx));
-    Xl.push_back(SX::sym("Xl"+std::to_string(H), nx));
+    Xr.push_back(SX::sym("Xr"+std::to_string(H+1), nx));
+    Xl.push_back(SX::sym("Xl"+std::to_string(H+1), nx));
 
     DM Ru = 1 * DM::eye(nu);  
     DM Qx = 7 * DM::eye(nx);  
@@ -99,18 +99,44 @@ centralizedNMPC::initSX_OCP(void) {
         obj += SX::mtimes({Al[i].T(), Qa, Al[i]});
     }
   
-    SX X = vertcat(vertcat(Xr), vertcat(Xl), vertcat(Ur), vertcat(Ul), vertcat(Ar), vertcat(Al));  
-    SX P = vertcat(x0_r, xref_r, uref_r, x0_l, xref_l, uref_l);  
+    // SX X = vertcat(vertcat(Xr), vertcat(Xl), vertcat(Ur), vertcat(Ul), vertcat(Ar), vertcat(Al));  
+    SX X = vertcat(vertcat(Xr), vertcat(Ur), vertcat(Ar), vertcat(Xl), vertcat(Ul), vertcat(Al));  
+    SX P = vertcat(x0_r, xref_r, uref_r, x0_l, xref_l, uref_l);
     SX G = vertcat(g);  
   
     SXDict nlp = {{"x", X}, {"f", obj}, {"g", G}, {"p", P}};  
   
     Dict solver_options;  
-    solver_options["print_time"] = false;  
+    solver_options["print_time"] = true;  
     solver_options["ipopt.print_level"] = 0;  
     solver_options["ipopt.tol"] = 1e-3;  
   
     solver = nlpsol("solver", "ipopt", nlp, solver_options);  
+
+    /* __________________________________ Solver Init Testing __________________________ */
+
+    auto solverInfo = [](const casadi::Function& solver) {  
+        if (solver.is_null()) 
+        {  
+            std::cout << "Solver NOT initialized (null Function)\n";  
+        } 
+        else 
+        {  
+            std::cout << "Solver: " << solver.name()  
+                       << " (n_in=" << solver.n_in() << ", n_out=" << solver.n_out() << ")\n";  
+            for (casadi_int i = 0; i < solver.n_in(); ++i) 
+            {  
+                std::cout << "  in[" << i << "] " << solver.name_in(i) << ": "  
+                           << solver.size1_in(i) << "x" << solver.size2_in(i) << "\n";  
+            }  
+            for (casadi_int i = 0; i < solver.n_out(); ++i) 
+            {  
+                std::cout << "  out[" << i << "] " << solver.name_out(i) << ": "  
+                           << solver.size1_out(i) << "x" << solver.size2_out(i) << "\n";  
+            }  
+        }
+    };
+    solverInfo(solver);
 };
 
 void 
@@ -146,8 +172,8 @@ centralizedNMPC::createOCP(void) {
         obj += MX::mtimes({Al[i].T(), Qa, Al[i]});  
     }  
   
-    optimizer.subject_to(Xr[0] == x0_r);  
-    optimizer.subject_to(Xl[0] == x0_l);  
+    optimizer.subject_to(Xr[0] == x0_r);
+    optimizer.subject_to(Xl[0] == x0_l);
   
     for (int k = 0; k < H; ++k) {  
         /* needs to be redone */
@@ -173,7 +199,7 @@ centralizedNMPC::createOCP(void) {
 };
 
 std::map<std::string, casadi::DM>
-centralizedNMPC::solve(const std::map<std::string, baseNMPC::armData> & manipulator_datas)
+centralizedNMPC::solve(const std::map<std::string, armTargetParams> & manipulator_datas)
 {  
     using namespace casadi;
     /*
@@ -186,34 +212,64 @@ centralizedNMPC::solve(const std::map<std::string, baseNMPC::armData> & manipula
             arm != armList.end();
             ++arm)
     {
-        const baseNMPC::armData & m_data = manipulator_datas.at(arm->id);
+        const armTargetParams & m_data = manipulator_datas.at(arm->id);
+        /*
 
-        const casadi_int nx = m_data.size;
-        DM x0_dm = DM::zeros(nx);
-        std::memcpy(x0_dm.ptr(), m_data.x0, sizeof(double) * nx);
+        const casadi_int n_dim = m_data.n_dim; // this is technically a size_t but k
+        DM q0_dm = DM::zeros(n_dim);
+        std::memcpy(q0_dm.ptr(), m_data.q0, sizeof(double) * n_dim);
 
+        DM v0_dm = DM::zeros(n_dim);
+        std::memcpy(v0_dm.ptr(), m_data.v0, sizeof(double) * n_dim);
+
+        DM qref_dm = DM::zeros(n_dim);
+        std::memcpy(qref_dm.ptr(), m_data.qref, sizeof(double) * n_dim);
+
+        DM vref_dm = DM::zeros(n_dim);
+        std::memcpy(vref_dm.ptr(), m_data.vref, sizeof(double) * n_dim);
+
+        DM uref_dm = DM::zeros(n_dim);
+        std::memcpy(uref_dm.ptr(), m_data.uref, sizeof(double) * n_dim);
+        */
+
+        /*
+        p_val_list.push_back(q0_dm);
+        p_val_list.push_back(v0_dm);
+        p_val_list.push_back(qref_dm);
+        p_val_list.push_back(vref_dm);
+        p_val_list.push_back(uref_dm);
+        */
+
+        DM x0_dm = eigenToDM(m_data.x0);
         DM xref_dm = eigenToDM(m_data.xref);
         DM uref_dm = eigenToDM(m_data.uref);
-
-        // Eigen::VectorXd xref = manip_data[arm.id].xref; // Eigen::VectorXd
-        // Eigen::VectorXd uref = manip_data[arm.id].uref; // Eigen::VectorXd
-        // double* x0 = manip_data[arm.id].x0; // double*
         p_val_list.push_back(x0_dm);
         p_val_list.push_back(xref_dm);
         p_val_list.push_back(uref_dm);
     }
   
     // DM x0 = DM::zeros(X.size1());
+    casadi_int ng = solver.size1_in(solver.index_in("lbg"));
+    DM lbg = DM::zeros(ng);
+    DM ubg = DM::zeros(ng);
+
     DM p_val = vertcat(p_val_list);
 
-    DMDict arg = {{"p", p_val}};
+    DMDict arg = {{"p", p_val}, {"lbg", lbg}, {"ubg", ubg}};
     DMDict res = solver(arg);
 
     DM x_opt = res.at("x");
     // DM f_opt = res.at("f");
     std::map<std::string, DM> u_star;
-    u_star[armList[0].id] = x_opt(Slice(nx + na, nx + na + nu)); // werid
-    u_star[armList[1].id] = x_opt(Slice(nx + na, nx + na + nu)); // werid
+
+    // needs to be redone
+    casadi_int off_Xr = (H+1)*nx;
+    casadi_int off_Ul = off_Xr;
+    casadi_int off_Xl = off_Xr + (H+1)*nx;
+    casadi_int off_Ur = off_Ur + H*nu;
+
+    u_star[armList[0].id] = x_opt(Slice(off_Ur, off_Ur + nu));
+    u_star[armList[1].id] = x_opt(Slice(off_Ul, off_Ul + nu));
 
     return u_star;
 };

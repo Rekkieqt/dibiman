@@ -31,16 +31,20 @@ baseNMPC::inverseKinematics(
     const std::string & target = "full")  
 {  
     using namespace pinocchio;
-    const double eps = 1e-6;  
+
+    const double eps = 1e-4;  
     const int IT_MAX = 4000;  
     const double DT = 1e-1;  
-    const double damp = 1e-12;  
+    const double damp = 1e-6;  
     
     Eigen::VectorXd q = q0;
     Eigen::VectorXd err(target == "full" ? 6 : 3);
+
+    Eigen::VectorXd v(model.nv);
     Eigen::MatrixXd J(6, model.nv);  
+    J.setZero();
     bool success = false;
-    int i = 0;  
+    int i = 0; 
     
     for (;;)  
     {  
@@ -52,12 +56,15 @@ baseNMPC::inverseKinematics(
           const SE3 iMd = data.oMf[frame_id].actInv(Href);  
           err = pinocchio::log6(iMd).toVector();  
         
-          J.setZero();  
           computeFrameJacobian(model, data, q, frame_id, pinocchio::LOCAL, J);  
+          Data::Matrix6 Jlog;
+          Jlog6(iMd.inverse(), Jlog);
+          J = -Jlog * J;
+          pinocchio::Data::Matrix6 JJt;
+          JJt.noalias() = J * J.transpose();
+          JJt.diagonal().array() += damp;
+          v.noalias() = -J.transpose() * JJt.ldlt().solve(err);
           J = -Jlog6(iMd.inverse()) * J;  
-        
-          Eigen::VectorXd v = -J.transpose() * (J * J.transpose() + damp * Eigen::MatrixXd::Identity(6, 6))  
-                                   .ldlt().solve(err);  
           q = integrate(model, q, v * DT);  
       }  
       else  
@@ -99,6 +106,7 @@ baseNMPC::getArmModel(const std::string & modelpath,
 
     std::vector<JointIndex> list_joints_to_use_id;
 
+    /* Inverted "Joints to Use" List and its indexes */
     std::vector<std::string> list_joints_to_lock;
     std::vector<JointIndex> list_joints_to_lock_id;
 
@@ -140,7 +148,6 @@ baseNMPC::inverseModel(const int n_dim)
     SX v = SX::sym("v", n_dim);
     SX a = SX::sym("a", n_dim);
   
-    // Simplified dynamics  
     SX x = vertcat(q, v);
     SX dx = vertcat(v, a);
   
@@ -172,7 +179,7 @@ baseNMPC::rnea(const icubArm & _arm)
       static_cast<std::vector<ADScalar>>(cs_q).data(), _arm.model.nv, 1);  
     
     ::casadi::SX cs_v = ::casadi::SX::sym("v", _arm.model.nv);  
-    TangentVectorAD v_ad(_arm.model.nv);  
+    TangentVectorAD v_ad(_arm.model.nv);
     v_ad = Eigen::Map<TangentVectorAD>(  
       static_cast<std::vector<ADScalar>>(cs_v).data(), _arm.model.nv, 1);  
     
@@ -254,10 +261,12 @@ baseNMPC::addArmToList(
         )
 {
     icubArm _arm;
+
     _arm.id = id;
     _arm.model = getArmModel(modelpath, joints_to_use);
     _arm.data = pinocchio::Data(_arm.model);
     _arm.hand_id = _arm.model.getFrameId(name_ee_frame);
+
     _arm.rnea_h = rnea(_arm);
     _arm.for_dyn_f = forwardModel(_arm);
     _arm.inv_dyn_f = inverseModel(_arm.model.nv);
@@ -296,6 +305,7 @@ baseNMPC::verifyManipulatorList(void)
           
         printFunctionInfo("Casadi Inverse Dynamics", _arm.inv_dyn_f);  
         printFunctionInfo("Casadi RNEA", _arm.rnea_h);  
+        printFunctionInfo("Casadi Discrete ABA", _arm.for_dyn_f);
         printFunctionInfo("Casadi Spatial Velocity (J(q) * v)", _arm.jac_h);
 
         std::cout << "u dim: " << nu << "a dim: " << na << "x dim: " << nx << std::endl;
@@ -311,14 +321,12 @@ baseNMPC::forwardModel(const icubArm & _arm)
     typedef ::casadi::SX ADScalar;
 
     typedef ModelTpl<Scalar> Model;
-    typedef Model::Data Data;
 
     typedef ModelTpl<ADScalar> ADModel;
     typedef ADModel::Data ADData;
 
     const Model & model = _arm.model;
-    const Data & data = _arm.data;
-  
+
     // Pick up random configuration, velocity and acceleration vectors.
     Eigen::VectorXd q(model.nq);
     q = randomConfiguration(model);
@@ -352,8 +360,21 @@ baseNMPC::forwardModel(const icubArm & _arm)
     for (Eigen::Index k = 0; k < model.nv; ++k)
     a_ad(k) = ad_data.ddq[k];
 
-    ::casadi::Function eval_aba(
-    "eval_aba", ::casadi::SXVector{cs_q, cs_v, cs_tau}, ::casadi::SXVector{a_ad});
+    // ::casadi::Function eval_aba("eval_aba", ::casadi::SXVector{cs_q, cs_v, cs_tau}, ::casadi::SXVector{a_ad});
+    ::casadi::SX cs_x = ::casadi::SX::vertcat({cs_q, cs_v});
+    ::casadi::Function eval_aba("aba", ::casadi::SXVector{cs_x, cs_tau}, ::casadi::SXVector{a_ad});
 
-    return eval_aba;
+    ::casadi::SX dx = ::casadi::SX::vertcat({cs_v, a_ad});
+
+    ::casadi::SXDict dae = {{"x", cs_x}, {"p", cs_tau}, {"ode", dx}};
+
+    ::casadi::Dict integrator_opts;
+    integrator_opts["simplify"] = true;
+    integrator_opts["number_of_finite_elements"] = 1;
+    
+    ::casadi::Function discr_aba = ::casadi::integrator("discr_aba", "rk", dae, 0, dt, integrator_opts);
+    
+    /* Discretization of the model */
+
+    return discr_aba;
 };

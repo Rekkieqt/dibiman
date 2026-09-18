@@ -13,6 +13,7 @@
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
+#include "pinocchio/algorithm/rnea.hpp"
 
 /* Casadi and Eigen */
 #include <casadi/casadi.hpp>
@@ -20,6 +21,7 @@
 
 /* NMPC libraries */
 #include "dibiman/nmpc/centralizedNMPC.hpp"
+#include "dibiman/utils/utils.hpp"
 
 using namespace pinocchio;
 
@@ -54,7 +56,6 @@ int main(int argc, char **argv)
         ids
         );
   
-
     /* ______________ Exposing the created Models and Datas ______________ */
 
     pinocchio::Model & right_model = manip_controller.armList[0].model;
@@ -104,6 +105,8 @@ int main(int argc, char **argv)
             
     right_model.addFrame(right_hand_to_object_frame);
     right_data = pinocchio::Data(right_model);
+    pinocchio::forwardKinematics(right_model, right_data, qi_r);
+    pinocchio::updateFramePlacements(right_model, right_data);
     const pinocchio::FrameIndex right_object_id = right_model.getFrameId("r_object");
 
     /* ______________ Left Hand ______________ */
@@ -121,11 +124,13 @@ int main(int argc, char **argv)
             
     left_model.addFrame(left_hand_to_object_frame);
     left_data = pinocchio::Data(left_model);
+    pinocchio::forwardKinematics(left_model, left_data, qi_l);
+    pinocchio::updateFramePlacements(left_model, left_data);
     const pinocchio::FrameIndex left_object_id = left_model.getFrameId("l_object");
 
     /* ______________ Object Based Reference Creation ______________ */
 
-    Eigen::VectorXd object_pos_ref = right_data.oMf[left_object_id].translation()
+    Eigen::VectorXd object_pos_ref = right_data.oMf[right_object_id].translation()
         + Eigen::Vector3d(0.02, 0.03, 0.06);
 
     Eigen::Vector3d rpy(0.0, M_PI/4.0, 0.0);
@@ -134,10 +139,17 @@ int main(int argc, char **argv)
     Eigen::Matrix3d object_Rot_ref = right_data.oMf[right_object_id].rotation() * R_delta;
 
     pinocchio::SE3 object_transform_ref(object_Rot_ref, object_pos_ref);
+    std::cout << object_transform_ref << std::endl;
 
     /* ______________ Inverse Kinematics ______________ */
+    const size_t n_dim = joint_list.size();
+    double* q_r_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> q_r_ref_vec(q_r_ref_arr, n_dim);
+    double* v_r_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> v_r_ref_vec(v_r_ref_arr, n_dim);
+    v_r_ref_vec.setZero();
 
-    Eigen::VectorXd qf_r = manip_controller.inverseKinematics(
+    q_r_ref_vec = manip_controller.inverseKinematics(
             right_model,
             right_data,
             qi_r,
@@ -146,7 +158,19 @@ int main(int argc, char **argv)
             "full"
             );
 
-    Eigen::VectorXd qf_l = manip_controller.inverseKinematics(
+    std::cout << q_r_ref_vec << std::endl;
+
+    double* u_r_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> u_r_ref_vec(u_r_ref_arr, n_dim);
+    u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
+
+    double* q_l_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> q_l_ref_vec(q_l_ref_arr, n_dim);
+    double* v_l_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> v_l_ref_vec(v_l_ref_arr, n_dim);
+    v_l_ref_vec.setZero();
+
+    q_l_ref_vec = manip_controller.inverseKinematics(
             left_model,
             left_data,
             qi_l,
@@ -155,25 +179,52 @@ int main(int argc, char **argv)
             "full"
             );
 
-    /* Controlled joints */
-    const size_t n_dim = joint_list.size();
-    // double* q_sens = new double[joints]; /* joint positions */
-    // double* v_sens = new double[joints]; /* joint velocities */
-    // double* a_sens = new double[joints]; /* joint accelerations */
-    // double* u_sens = new double[joints]; /* tau -> torque at the joints */ 
+    std::cout << q_l_ref_vec << std::endl;
 
-    /* dynamic link between double arrays and eigen arrays */
-    // Eigen::Map<Eigen::VectorXd> q_sens_Vec(q_sens, joints);
-    // Eigen::Map<Eigen::VectorXd> qd_meas_v(qd_all, joints);
-    // Eigen::Map<Eigen::VectorXd> qdd_meas_v(qdd_meas, joints);
-    // Eigen::Map<Eigen::VectorXd> tau_v(tau, joints);
-    // Eigen::Map<Eigen::VectorXd> tau_meas_v(tau_meas, joints);
+    double* u_l_ref_arr = new double[n_dim];
+    Eigen::Map<Eigen::VectorXd> u_l_ref_vec(u_l_ref_arr, n_dim);
+    u_r_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
 
-    for (int i = 0; i < 2; i++) {
+    /* Right Arm */
+    double* q_r_arr = new double[n_dim]; /* joint positions */
+    Eigen::Map<Eigen::VectorXd> q_r_vec(q_r_arr, n_dim);
+    q_r_vec.setZero();
 
-        // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
-        // pinocchio::updateFramePlacements(reduced_model, data);  
-        // std::cout << data.oMf[handID] << std::endl;
+    double* v_r_arr = new double[n_dim]; /* joint velocities */
+    Eigen::Map<Eigen::VectorXd> v_r_vec(v_r_arr, n_dim);
+    v_r_vec.setZero();
+
+    /* Left Arm */
+    double* q_l_arr = new double[n_dim]; /* joint positions */
+    Eigen::Map<Eigen::VectorXd> q_l_vec(q_l_arr, n_dim);
+    q_l_vec.setZero();
+
+    double* v_l_arr = new double[n_dim]; /* joint velocities */
+    Eigen::Map<Eigen::VectorXd> v_l_vec(v_l_arr, n_dim);
+    v_l_vec.setZero();
+
+    /* ____________ Solver Structs Init _________________ */
+    dibiman::armTargetParams right_params(q_r_vec.size() + v_r_vec.size(),
+            u_r_ref_vec.size());
+
+    right_params.x0 << q_r_vec, v_r_vec;
+    right_params.xref << q_r_ref_vec, v_r_ref_vec;
+    right_params.uref = u_r_ref_vec;
+
+    dibiman::armTargetParams left_params(q_l_vec.size() + v_l_vec.size(),
+            u_l_ref_vec.size());
+
+    left_params.x0 << q_l_vec, v_l_vec;
+    left_params.xref << q_l_ref_vec, v_l_ref_vec;
+    left_params.uref = u_l_ref_vec;
+
+    std::map<std::string, dibiman::armTargetParams> bimanual_solve_params;
+    bimanual_solve_params[ids[0]] = right_params;
+    bimanual_solve_params[ids[1]] = left_params;
+
+    std::map<std::string, casadi::DM> u_star = manip_controller.solve(bimanual_solve_params);
+
+    for (int i = 0; i < 50; i++) {
 
     }
     

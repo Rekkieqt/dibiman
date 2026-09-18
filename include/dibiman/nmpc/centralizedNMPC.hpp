@@ -4,6 +4,7 @@
 #include <casadi/casadi.hpp>
 
 #include "dibiman/nmpc/baseNMPC.hpp"
+#include "dibiman/utils/utils.hpp"
 
 namespace dibiman {
     class centralizedNMPC: public baseNMPC {
@@ -41,7 +42,7 @@ namespace dibiman {
 
             void createOCP(void) override;
 
-            std::map<std::string, casadi::DM> solve(const std::map<std::string, baseNMPC::armData>& manip_data) override;
+            std::map<std::string, casadi::DM> solve(const std::map<std::string, armTargetParams>&) override;
     };
 };
   
