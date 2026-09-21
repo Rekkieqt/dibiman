@@ -16,7 +16,7 @@ export YARP_QUIET=1
 GAZEBO_WORLD_PATH="$PWD/../gazebo/table-world.sdf"
 LEFT_ARM_DOT_INI_PATH="$PWD/../conf/left_arm.ini"
 RIGHT_ARM_DOT_INI_PATH="$PWD/../conf/right_arm.ini"
-BINARY_PATH="$PWD/../build/biman"
+BINARY_PATH="$PWD/../build/gz-cub-bim"
 
 # Start servers
 yarpserver --write --silent &

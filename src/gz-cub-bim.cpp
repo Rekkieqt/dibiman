@@ -25,7 +25,9 @@
 
 /* Pinocchio libraries */
 #include "pinocchio/algorithm/kinematics.hpp"
+#include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/joint-configuration.hpp"
+#include "pinocchio/algorithm/rnea.hpp"
 
 /* Casadi and Eigen */
 #include <casadi/casadi.hpp>
@@ -42,20 +44,12 @@ int main(int argc, char **argv)
 {
     /* findGroup -> find a list and save it as a Bottle, useful for later */
     std::string right_robotName = "icubSim";/* icubSim */
-    std::string right_partName = "right_arm" /* {ARM}_arm */
+    std::string right_partName = "right_arm"; /* {ARM}_arm */
     std::string right_local = "/right_arm_controller"; /* /{ARM}_arm_controller */
 
     std::string left_robotName = "icubSim"; /* icubSim */
     std::string left_partName = "left_arm"; /* {ARM}_arm */
     std::string left_local = "/left_arm_controller"; /* /{ARM}_arm_controller */
-
-    bool single_mode = true;
-    
-    if (robotName=="")
-    {
-        std::cout << "Failed loading config file!" << std::endl;
-        return -1;
-    }
 
     /* __________________________________________ YARP NETWORKING __________________________________________ */
 
@@ -70,13 +64,13 @@ int main(int argc, char **argv)
     std::string right_localPorts = "/right_arm_controller"; /* /{ARM}_arm_controller */
 
     /* connect to simulated control board */
-    Property options;
-    options.put("device", "remote_controlboard");
-    options.put("local", right_localPorts.c_str());   
-    options.put("remote", right_remotePorts.c_str()); 
+    Property right_options;
+    right_options.put("device", "remote_controlboard");
+    right_options.put("local", right_localPorts.c_str());   
+    right_options.put("remote", right_remotePorts.c_str()); 
 
     /* create a device */
-    PolyDriver right_robotDevice(options);
+    PolyDriver right_robotDevice(right_options);
     if (!right_robotDevice.isValid()) {
         yError("(right) Device not available.\n");
         return 0;
@@ -90,10 +84,53 @@ int main(int argc, char **argv)
 
     /* check if interfaces are available */
     bool ok;
-    ok = robotDevice.view(right_controlMode);
-    ok = ok && robotDevice.view(right_torqueControl);
-    ok = ok && robotDevice.view(right_encoders);
-    ok = ok && robotDevice.view(right_axInfo);
+    ok = right_robotDevice.view(right_controlMode);
+    ok = ok && right_robotDevice.view(right_torqueControl);
+    ok = ok && right_robotDevice.view(right_encoders);
+    ok = ok && right_robotDevice.view(right_axInfo);
+    
+    if (!ok) {
+        yError("Problems acquiring interfaces\n");
+        return 0;
+    }
+
+    /* __________________________________________ BREAK __________________________________________ */
+
+    /* configuring in and out ports */
+    /* where to connect */
+    std::string left_remotePorts="/";
+    left_remotePorts+=left_robotName;
+    left_remotePorts+="/";
+    left_remotePorts+=left_partName;
+
+    /* name of local port */
+    std::string left_localPorts = "/left_arm_controller"; /* /{ARM}_arm_controller */
+
+    /* connect to simulated control board */
+    Property left_options;
+    left_options.put("device", "remote_controlboard");
+    left_options.put("local", left_localPorts.c_str());   
+    left_options.put("remote", left_remotePorts.c_str()); 
+
+    /* create a device */
+    PolyDriver left_robotDevice(left_options);
+    if (!left_robotDevice.isValid()) {
+        yError("(left) Device not available.\n");
+        return 0;
+    }
+
+    /* create interfaces */
+    IControlMode *left_controlMode;
+    ITorqueControl *left_torqueControl;
+    IEncoders *left_encoders;
+    IAxisInfo *left_axInfo;
+
+    /* check if interfaces are available */
+    ok = false;
+    ok = left_robotDevice.view(left_controlMode);
+    ok = ok && left_robotDevice.view(left_torqueControl);
+    ok = ok && left_robotDevice.view(left_encoders);
+    ok = ok && left_robotDevice.view(left_axInfo);
     
     if (!ok) {
         yError("Problems acquiring interfaces\n");
@@ -101,6 +138,7 @@ int main(int argc, char **argv)
     }
 
     /* __________________________________________ ARM CONTROL START __________________________________________  */
+
     const std::vector<std::string> joint_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "wrist_yaw"};
     const std::vector<std::string> ids = {"right_icub_arm", "left_icub_arm"};
     const std::vector<std::string> end_effector_frame_names = {"r_hand", "l_hand"};
@@ -293,15 +331,41 @@ int main(int argc, char **argv)
     bimanual_solve_params[ids[0]] = right_params;
     bimanual_solve_params[ids[1]] = left_params;
 
-    std::map<std::string, casadi::DM> u_star = manip_controller.solve(bimanual_solve_params);
+    int joint_idx_arr[] = {0, 1, 2, 3, 4, 5, 6};
+    
+    for (int i = 0; i < static_cast<int>(n_dim); i++) {
+        right_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
+        left_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
+    }
 
-    double joint_idx_arr[] = {}
+    std::map<std::string, casadi::DM> u_star;
+    u_star = manip_controller.solve(bimanual_solve_params);
+    return 0;
+
     for (int i = 0; i < 100; i++) {
+        double* u_r = u_star.at(ids[0]).ptr();
+        double* u_l = u_star.at(ids[1]).ptr();
 
-        for (int j = 0; j < n_dim; j++) {
-          right_encoders->getEncoder(idx_joints[j], &q_r_arr[j]);
+        for (int j = 0; j < static_cast<int>(n_dim); j++) {
+          right_encoders->getEncoder(joint_idx_arr[j], &q_r_arr[j]);
+          right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
           q_r_arr[j] = (M_PI/180) * q_r_arr[j];
+          v_r_arr[j] = (M_PI/180) * v_r_arr[j];
+
+          left_encoders->getEncoder(joint_idx_arr[j], &q_r_arr[j]);
+          right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
+          q_l_arr[j] = (M_PI/180) * q_l_arr[j];
+          v_l_arr[j] = (M_PI/180) * v_l_arr[j];
+
+          right_torqueControl->setRefTorques(u_r);
+          left_torqueControl->setRefTorques(u_l);
         }
+
+        left_params.x0 << q_l_vec, v_l_vec;
+        right_params.x0 << q_r_vec, v_r_vec;
+
+        u_star = manip_controller.solve(bimanual_solve_params);
+
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
         // pinocchio::updateFramePlacements(reduced_model, data);  
         // std::cout << data.oMf[handID] << std::endl;
