@@ -1,0 +1,113 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="grasp_world">
+
+    <!-- Physics -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Core systems (required for modern Gazebo) -->
+    <plugin
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+    </plugin>
+    <!--
+    <plugin
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands">
+    </plugin>
+    -->
+    <plugin
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <!--
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    -->
+
+    <!-- Sun light -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane from default.sdf -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="iCub">
+      <include>
+        <uri>model://iCubGazeboV2_5_visuomanip</uri>
+        <pose>0 0 0.63 0.0 0.0 0.0</pose>
+      </include>
+    </model>
+
+    <include>
+      <uri> https://fuel.gazebosim.org/1.0/OpenRobotics/models/BedsideTable2 </uri>
+      <name> bedside_table </name>
+      <pose> -.4 0 -.30 0 0 0 </pose>
+    </include>
+
+    <include>
+      <uri> https://fuel.gazebosim.org/1.0/GoogleResearch/models/Threshold_Basket_Natural_Finish_Fabric_Liner_Small </uri>
+      <pose> -.35 0 1.5 0 0 0 </pose>
+    </include>
+
+    <!--
+    <include>
+      <uri> https://fuel.gazebosim.org/1.0/QCforward/models/carboard box </uri>
+      <name> carboard_box </name>
+      <pose> .7 0 1 0 0 0 </pose>
+    </include>
+    -->
+
+    <!--
+    <include>
+      <uri> https://fuel.gazebosim.org/1.0/will0993/models/CoffeeTable </uri>
+      <name> coffee_table </name>
+      <pose> .5 0 0 0 0 0 </pose>
+      <scale> 0.7 0.7 0.7 </scale>
+    </include>
+    -->
+
+  </world>
+</sdf>

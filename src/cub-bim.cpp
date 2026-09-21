@@ -139,9 +139,9 @@ int main(int argc, char **argv)
     Eigen::Matrix3d object_Rot_ref = right_data.oMf[right_object_id].rotation() * R_delta;
 
     pinocchio::SE3 object_transform_ref(object_Rot_ref, object_pos_ref);
-    std::cout << object_transform_ref << std::endl;
 
     /* ______________ Inverse Kinematics ______________ */
+
     const size_t n_dim = joint_list.size();
     double* q_r_ref_arr = new double[n_dim];
     Eigen::Map<Eigen::VectorXd> q_r_ref_vec(q_r_ref_arr, n_dim);
