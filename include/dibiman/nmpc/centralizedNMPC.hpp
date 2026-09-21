@@ -8,27 +8,6 @@
 
 namespace dibiman {
     class centralizedNMPC: public baseNMPC {
-        casadi::Opti optimizer;
-
-        /* right arm variables */
-        std::vector<casadi::MX> Xr;
-        std::vector<casadi::MX> Ar;
-        std::vector<casadi::MX> Ur;
-
-        /* right hand parameters */
-        casadi::MX x0_r;
-        casadi::MX xref_r;
-        casadi::MX uref_r;
-
-        /* left hand variables */
-        std::vector<casadi::MX> Xl;
-        std::vector<casadi::MX> Al;
-        std::vector<casadi::MX> Ul;
-
-        /* left hand parameters */
-        casadi::MX x0_l;
-        casadi::MX xref_l;
-        casadi::MX uref_l;
 
         public:
             centralizedNMPC(

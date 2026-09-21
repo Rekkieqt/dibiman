@@ -293,21 +293,27 @@ int main(int argc, char **argv)
     Eigen::Map<Eigen::VectorXd> u_l_ref_vec(u_l_ref_arr, n_dim);
     u_r_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
 
+    int right_num_jnts;
+    right_encoders->getAxes(&right_num_jnts);
+
     /* Right Arm */
-    double* q_r_arr = new double[n_dim]; /* joint positions */
+    double* q_r_arr = new double[right_num_jnts]; /* joint positions */
     Eigen::Map<Eigen::VectorXd> q_r_vec(q_r_arr, n_dim);
     q_r_vec.setZero();
 
-    double* v_r_arr = new double[n_dim]; /* joint velocities */
+    double* v_r_arr = new double[right_num_jnts]; /* joint velocities */
     Eigen::Map<Eigen::VectorXd> v_r_vec(v_r_arr, n_dim);
     v_r_vec.setZero();
 
+    int left_num_jnts;
+    left_encoders->getAxes(&left_num_jnts);
+
     /* Left Arm */
-    double* q_l_arr = new double[n_dim]; /* joint positions */
+    double* q_l_arr = new double[left_num_jnts]; /* joint positions */
     Eigen::Map<Eigen::VectorXd> q_l_vec(q_l_arr, n_dim);
     q_l_vec.setZero();
 
-    double* v_l_arr = new double[n_dim]; /* joint velocities */
+    double* v_l_arr = new double[left_num_jnts]; /* joint velocities */
     Eigen::Map<Eigen::VectorXd> v_l_vec(v_l_arr, n_dim);
     v_l_vec.setZero();
 
@@ -331,6 +337,10 @@ int main(int argc, char **argv)
     bimanual_solve_params[ids[0]] = right_params;
     bimanual_solve_params[ids[1]] = left_params;
 
+    std::map<std::string, casadi::DM> u_star;
+    u_star[ids[0]] = casadi::DM::zeros(n_dim);
+    u_star[ids[1]] = casadi::DM::zeros(n_dim);
+
     int joint_idx_arr[] = {0, 1, 2, 3, 4, 5, 6};
     
     for (int i = 0; i < static_cast<int>(n_dim); i++) {
@@ -338,15 +348,10 @@ int main(int argc, char **argv)
         left_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
     }
 
-    std::map<std::string, casadi::DM> u_star;
-    u_star = manip_controller.solve(bimanual_solve_params);
-    return 0;
-
-    for (int i = 0; i < 100; i++) {
-        double* u_r = u_star.at(ids[0]).ptr();
-        double* u_l = u_star.at(ids[1]).ptr();
-
+    for (int i = 0; i < 20; i++) {
+        /*
         for (int j = 0; j < static_cast<int>(n_dim); j++) {
+
           right_encoders->getEncoder(joint_idx_arr[j], &q_r_arr[j]);
           right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
           q_r_arr[j] = (M_PI/180) * q_r_arr[j];
@@ -356,15 +361,49 @@ int main(int argc, char **argv)
           right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
           q_l_arr[j] = (M_PI/180) * q_l_arr[j];
           v_l_arr[j] = (M_PI/180) * v_l_arr[j];
-
-          right_torqueControl->setRefTorques(u_r);
-          left_torqueControl->setRefTorques(u_l);
         }
+        */
+
+        left_encoders->getEncoders(q_l_arr);
+        right_encoders->getEncoders(q_r_arr);
+
+        left_encoders->getEncoderSpeeds(v_l_arr);
+        right_encoders->getEncoderSpeeds(v_r_arr);
 
         left_params.x0 << q_l_vec, v_l_vec;
+        left_params.x0 *= (M_PI/180);
+        //std::cout << left_params.x0.transpose() << "\n";
+
         right_params.x0 << q_r_vec, v_r_vec;
+        right_params.x0 *= (M_PI/180);
+        //std::cout << right_params.x0.transpose() << "\n";
 
         u_star = manip_controller.solve(bimanual_solve_params);
+        double* u_r = u_star.at(ids[0]).ptr();
+        double* u_l = u_star.at(ids[1]).ptr();
+
+        casadi::DM & u_r_dm = u_star.at(ids[0]);
+        std::cout << u_r_dm << "\n";
+
+        casadi::DM & u_l_dm = u_star.at(ids[1]);
+        std::cout << u_l_dm << "\n";
+
+        bool ok = right_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_r);
+        if (!ok) return 1;
+        ok = left_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_l);
+        if (!ok) return 1;
+
+        double* right_temp_torque = new double[right_num_jnts]; 
+        Eigen::Map<Eigen::VectorXd> right_temp_torque_vec(right_temp_torque, right_num_jnts);
+        right_torqueControl->getRefTorques(right_temp_torque);
+        //std::cout << right_temp_torque_vec.transpose() << std::endl;
+        delete[] right_temp_torque;
+
+        double* left_temp_torque = new double[left_num_jnts]; 
+        Eigen::Map<Eigen::VectorXd> left_temp_torque_vec(left_temp_torque, left_num_jnts);
+        left_torqueControl->getRefTorques(left_temp_torque);
+        //std::cout << left_temp_torque_vec.transpose() << std::endl;
+        delete[] left_temp_torque;
 
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
         // pinocchio::updateFramePlacements(reduced_model, data);  
@@ -384,6 +423,7 @@ int main(int argc, char **argv)
     /* later can put this into 'graceful' exit with interrupt ... */
 
     right_robotDevice.close();
+    left_robotDevice.close();
     
     return 0;
 }
