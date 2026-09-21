@@ -1,6 +1,6 @@
 /* yarp libraries */
-#include "yarp/os/Bottle.h"
-#include "yarp/os/BufferedPort.h"
+#include <yarp/os/Bottle.h>
+#include <yarp/os/BufferedPort.h>
 #include <yarp/os/Network.h>
 #include <yarp/os/ResourceFinder.h>
 #include <yarp/dev/PolyDriver.h>
@@ -38,24 +38,18 @@ using namespace yarp::os;
 using namespace yarp::dev;
 using namespace pinocchio;
 
-
 int main(int argc, char **argv)
 {
-    /* dynamic parameter loading with rf */
-    ResourceFinder rf;
-    rf.configure(argc, argv);
-
     /* findGroup -> find a list and save it as a Bottle, useful for later */
-    std::string robotName = rf.find("robot").asString();
-    std::string partName = rf.find("part").asString();
-    std::string local = rf.find("local").asString();
-    std::string remote = rf.find("remote").asString();
-    std::string comm = rf.find("comm").asString();
-    std::string arm_prefix = rf.find("prfx").asString();
-    std::string urdf_filename = rf.find("model").asString(); 
+    std::string right_robotName = "icubSim";/* icubSim */
+    std::string right_partName = "right_arm" /* {ARM}_arm */
+    std::string right_local = "/right_arm_controller"; /* /{ARM}_arm_controller */
 
-    int joints = rf.find("joints").asInt32();
-    bool single_mode = rf.find("single").asBool();
+    std::string left_robotName = "icubSim"; /* icubSim */
+    std::string left_partName = "left_arm"; /* {ARM}_arm */
+    std::string left_local = "/left_arm_controller"; /* /{ARM}_arm_controller */
+
+    bool single_mode = true;
     
     if (robotName=="")
     {
@@ -67,68 +61,43 @@ int main(int argc, char **argv)
 
     /* configuring in and out ports */
     /* where to connect */
-    std::string remotePorts="/";
-    remotePorts+=robotName;
-    remotePorts+="/";
-    remotePorts+=partName;
+    std::string right_remotePorts="/";
+    right_remotePorts+=right_robotName;
+    right_remotePorts+="/";
+    right_remotePorts+=right_partName;
 
     /* name of local port */
-    std::string localPorts= rf.find("local").asString();
+    std::string right_localPorts = "/right_arm_controller"; /* /{ARM}_arm_controller */
 
     /* connect to simulated control board */
     Property options;
     options.put("device", "remote_controlboard");
-    options.put("local", localPorts.c_str());   
-    options.put("remote", remotePorts.c_str()); 
+    options.put("local", right_localPorts.c_str());   
+    options.put("remote", right_remotePorts.c_str()); 
 
     /* create a device */
-    PolyDriver robotDevice(options);
-    if (!robotDevice.isValid()) {
-        yError("Device not available.\n");
+    PolyDriver right_robotDevice(options);
+    if (!right_robotDevice.isValid()) {
+        yError("(right) Device not available.\n");
         return 0;
     }
 
     /* create interfaces */
-    IControlMode *controlMode;
-    ITorqueControl *torqueControl;
-    IPositionControl *positionControl;
-    IEncoders *armSensors;
-    IAxisInfo *axInfo;
+    IControlMode *right_controlMode;
+    ITorqueControl *right_torqueControl;
+    IEncoders *right_encoders;
+    IAxisInfo *right_axInfo;
 
     /* check if interfaces are available */
     bool ok;
-    ok = robotDevice.view(controlMode);
-    ok = ok && robotDevice.view(torqueControl);
-    ok = ok && robotDevice.view(positionControl);
-    ok = ok && robotDevice.view(armSensors);
-    ok = ok && robotDevice.view(axInfo);
+    ok = robotDevice.view(right_controlMode);
+    ok = ok && robotDevice.view(right_torqueControl);
+    ok = ok && robotDevice.view(right_encoders);
+    ok = ok && robotDevice.view(right_axInfo);
     
     if (!ok) {
         yError("Problems acquiring interfaces\n");
         return 0;
-    }
-
-    /* establish comms between right and left arm */
-    /* from where to write */
-    std::string inPort = rf.find("inport").asString();
-    /* where to receive */
-    std::string outPort = rf.find("outport").asString();
-    /* where to write */
-    std::string writePort = rf.find("writeport").asString();
-
-    BufferedPort<Bottle> recvPort;
-    BufferedPort<Bottle> sendPort;
-
-    recvPort.open(inPort);
-    sendPort.open(outPort);
-
-    /* yarp networking */
-    Network yarp;
-
-    /* wait for the other node to come online */
-    while (!(yarp.connect(outPort, writePort) || single_mode)) {
-        std::cout << "Waiting for the other node to connect ..." << std::endl;
-        yarp::os::Time::delay(3);
     }
 
     /* __________________________________________ ARM CONTROL START __________________________________________  */
@@ -157,8 +126,7 @@ int main(int argc, char **argv)
         urdf_path,
         list_of_joints,
         end_effector_frame_names,
-        ids
-        );
+        ids);
   
     /* ______________ Exposing the created Models and Datas ______________ */
 
@@ -306,6 +274,7 @@ int main(int argc, char **argv)
     v_l_vec.setZero();
 
     /* ____________ Solver Structs Init _________________ */
+
     dibiman::armTargetParams right_params(q_r_vec.size() + v_r_vec.size(),
             u_r_ref_vec.size());
 
@@ -326,10 +295,11 @@ int main(int argc, char **argv)
 
     std::map<std::string, casadi::DM> u_star = manip_controller.solve(bimanual_solve_params);
 
+    double joint_idx_arr[] = {}
     for (int i = 0; i < 100; i++) {
 
         for (int j = 0; j < n_dim; j++) {
-          armSensors->getEncoder(idx_joints[j], &q_r_arr[j]);
+          right_encoders->getEncoder(idx_joints[j], &q_r_arr[j]);
           q_r_arr[j] = (M_PI/180) * q_r_arr[j];
         }
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
@@ -343,24 +313,13 @@ int main(int argc, char **argv)
         // logData(file, tau_v, q_meas_v, joints);
 
         /* send info to other node(arm) */
-        Bottle *b = recvPort.read(false);
-        if (b!=NULL) {
-            /* receive communication works */
-            // cout << "Data received!\n";
-            // cout << "got " << b->toString().c_str();
-        }
-        Bottle& s = sendPort.prepare();
-        s.clear();
-        s.addString(inPort);
-        sendPort.write();
         
         yarp::os::Time::delay(0.05);
     }
     /* cleanup, effectively useless because at the moment I ctrl+c from while */
     /* later can put this into 'graceful' exit with interrupt ... */
 
-    robotDevice.close();
-    file.close();
+    right_robotDevice.close();
     
     return 0;
 }
