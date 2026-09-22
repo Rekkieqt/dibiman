@@ -204,15 +204,13 @@ int main(int argc, char **argv)
     v_l_vec.setZero();
 
     /* ____________ Solver Structs Init _________________ */
-    dibiman::armTargetParams right_params(q_r_vec.size() + v_r_vec.size(),
-            u_r_ref_vec.size());
+    dibiman::armTargetParams right_params(q_r_vec.size());
 
     right_params.x0 << q_r_vec, v_r_vec;
     right_params.xref << q_r_ref_vec, v_r_ref_vec;
     right_params.uref = u_r_ref_vec;
 
-    dibiman::armTargetParams left_params(q_l_vec.size() + v_l_vec.size(),
-            u_l_ref_vec.size());
+    dibiman::armTargetParams left_params(q_l_vec.size());
 
     left_params.x0 << q_l_vec, v_l_vec;
     left_params.xref << q_l_ref_vec, v_l_ref_vec;

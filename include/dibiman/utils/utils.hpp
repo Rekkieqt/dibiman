@@ -13,10 +13,10 @@ namespace dibiman {
 
         armTargetParams() = default;
 
-        armTargetParams(int nx, int nu)
-            : x0(nx),
-            xref(nx),
-            uref(nu)
+        armTargetParams(int nv)
+            : x0(nv + nv),
+            xref(nv + nv),
+            uref(nv)
 
         {
             // x0.setZero();
