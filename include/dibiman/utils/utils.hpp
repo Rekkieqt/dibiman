@@ -17,10 +17,11 @@ namespace dibiman {
             : x0(nx),
             xref(nx),
             uref(nu)
+
         {
-            x0.setZero();
-            xref.setZero();
-            uref.setZero();
+            // x0.setZero();
+            // xref.setZero();
+            // uref.setZero();
         }
 
         // double* q0 = nullptr;

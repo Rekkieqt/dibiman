@@ -36,9 +36,30 @@
 /* NMPC libraries */
 #include "dibiman/nmpc/centralizedNMPC.hpp"
 
+/* Gazebo libraries */
+#include <gz/transport/Node.hh>
+#include <gz/msgs/world_control.pb.h>
+#include <gz/msgs/boolean.pb.h>
+
 using namespace yarp::os;
 using namespace yarp::dev;
 using namespace pinocchio;
+
+void worldControl(uint64_t _steps, const std::string & _world_name, bool _paused=true)
+{
+    using namespace gz;
+    msgs::WorldControl req;  
+    req.set_pause(_paused);  
+    req.set_multi_step(_steps);  
+
+    msgs::Boolean rep;
+    bool result = false;
+    transport::Node node;  
+    bool executed = node.Request("/world/" + _world_name + "/control", req, 2000, rep, result); 
+
+    if (!(executed && result && rep.data()))
+        std::cerr << "Failed to send request!\n";
+}
 
 int main(int argc, char **argv)
 {
@@ -268,8 +289,6 @@ int main(int argc, char **argv)
             "full"
             );
 
-    std::cout << q_r_ref_vec << std::endl;
-
     double* u_r_ref_arr = new double[n_dim];
     Eigen::Map<Eigen::VectorXd> u_r_ref_vec(u_r_ref_arr, n_dim);
     u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
@@ -291,7 +310,7 @@ int main(int argc, char **argv)
 
     double* u_l_ref_arr = new double[n_dim];
     Eigen::Map<Eigen::VectorXd> u_l_ref_vec(u_l_ref_arr, n_dim);
-    u_r_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
+    u_l_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
 
     int right_num_jnts;
     right_encoders->getAxes(&right_num_jnts);
@@ -325,6 +344,7 @@ int main(int argc, char **argv)
     right_params.x0 << q_r_vec, v_r_vec;
     right_params.xref << q_r_ref_vec, v_r_ref_vec;
     right_params.uref = u_r_ref_vec;
+    std::cout << "left u ref \n" << u_l_ref_vec;
 
     dibiman::armTargetParams left_params(q_l_vec.size() + v_l_vec.size(),
             u_l_ref_vec.size());
@@ -332,6 +352,7 @@ int main(int argc, char **argv)
     left_params.x0 << q_l_vec, v_l_vec;
     left_params.xref << q_l_ref_vec, v_l_ref_vec;
     left_params.uref = u_l_ref_vec;
+    std::cout << "left u ref \n" << u_l_ref_vec;
 
     std::map<std::string, dibiman::armTargetParams> bimanual_solve_params;
     bimanual_solve_params[ids[0]] = right_params;
@@ -348,22 +369,10 @@ int main(int argc, char **argv)
         left_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
     }
 
-    for (int i = 0; i < 20; i++) {
-        /*
-        for (int j = 0; j < static_cast<int>(n_dim); j++) {
+    worldControl(0, "grasp-world", false);
+    return 0;
 
-          right_encoders->getEncoder(joint_idx_arr[j], &q_r_arr[j]);
-          right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
-          q_r_arr[j] = (M_PI/180) * q_r_arr[j];
-          v_r_arr[j] = (M_PI/180) * v_r_arr[j];
-
-          left_encoders->getEncoder(joint_idx_arr[j], &q_r_arr[j]);
-          right_encoders->getEncoderSpeed(joint_idx_arr[j], &v_r_arr[j]);
-          q_l_arr[j] = (M_PI/180) * q_l_arr[j];
-          v_l_arr[j] = (M_PI/180) * v_l_arr[j];
-        }
-        */
-
+    for (;;) {
         left_encoders->getEncoders(q_l_arr);
         right_encoders->getEncoders(q_r_arr);
 
@@ -372,38 +381,26 @@ int main(int argc, char **argv)
 
         left_params.x0 << q_l_vec, v_l_vec;
         left_params.x0 *= (M_PI/180);
-        //std::cout << left_params.x0.transpose() << "\n";
 
         right_params.x0 << q_r_vec, v_r_vec;
         right_params.x0 *= (M_PI/180);
-        //std::cout << right_params.x0.transpose() << "\n";
+
+        bimanual_solve_params[ids[0]] = right_params;
+        bimanual_solve_params[ids[1]] = left_params;
 
         u_star = manip_controller.solve(bimanual_solve_params);
         double* u_r = u_star.at(ids[0]).ptr();
         double* u_l = u_star.at(ids[1]).ptr();
 
-        casadi::DM & u_r_dm = u_star.at(ids[0]);
-        std::cout << u_r_dm << "\n";
-
-        casadi::DM & u_l_dm = u_star.at(ids[1]);
-        std::cout << u_l_dm << "\n";
+        std::cout << "right u\n" << u_star.at(ids[0]) << "\n";
+        std::cout << "left u\n" << u_star.at(ids[0]) << "\n";
 
         bool ok = right_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_r);
         if (!ok) return 1;
         ok = left_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_l);
         if (!ok) return 1;
 
-        double* right_temp_torque = new double[right_num_jnts]; 
-        Eigen::Map<Eigen::VectorXd> right_temp_torque_vec(right_temp_torque, right_num_jnts);
-        right_torqueControl->getRefTorques(right_temp_torque);
-        //std::cout << right_temp_torque_vec.transpose() << std::endl;
-        delete[] right_temp_torque;
-
-        double* left_temp_torque = new double[left_num_jnts]; 
-        Eigen::Map<Eigen::VectorXd> left_temp_torque_vec(left_temp_torque, left_num_jnts);
-        left_torqueControl->getRefTorques(left_temp_torque);
-        //std::cout << left_temp_torque_vec.transpose() << std::endl;
-        delete[] left_temp_torque;
+        // worldControl(5, "grasp-world");
 
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
         // pinocchio::updateFramePlacements(reduced_model, data);  
@@ -417,7 +414,6 @@ int main(int argc, char **argv)
 
         /* send info to other node(arm) */
         
-        yarp::os::Time::delay(0.05);
     }
     /* cleanup, effectively useless because at the moment I ctrl+c from while */
     /* later can put this into 'graceful' exit with interrupt ... */

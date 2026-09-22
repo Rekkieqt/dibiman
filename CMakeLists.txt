@@ -9,6 +9,9 @@ find_package(YARP REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(casadi REQUIRED)
+find_package(gz-sim REQUIRED)
+find_package(gz-msgs REQUIRED)
+find_package(gz-transport REQUIRED)
 
 # simulator exe name and path
 set(EXECUTABLE_NAME cub-bim)
@@ -36,7 +39,7 @@ target_include_directories(${GAZEBO_EXECUTABLE_NAME} PRIVATE
 target_compile_options(${GAZEBO_EXECUTABLE_NAME} PUBLIC -Wall -O0)
 
 target_link_libraries(${GAZEBO_EXECUTABLE_NAME} PRIVATE
-  ${YARP_LIBRARIES} casadi::casadi pinocchio::pinocchio Eigen3::Eigen)
+  ${YARP_LIBRARIES} casadi::casadi pinocchio::pinocchio Eigen3::Eigen gz-sim::gz-sim gz-transport::gz-transport gz-msgs::gz-msgs)
 
 # =============== Normal Testing Executable =====================
 add_executable(${EXECUTABLE_NAME} src/cub-bim.cpp ${COMMON_SOURCES})

@@ -157,7 +157,6 @@ centralizedNMPC::solve(const std::map<std::string, armTargetParams> & manipulato
     {
         const armTargetParams & m_data = manipulator_datas.at(arm->id);
         DM x0_dm = eigenToDM(m_data.x0);
-        std::cout << arm->id << "\n" << x0_dm << "\n";
         DM xref_dm = eigenToDM(m_data.xref);
         DM uref_dm = eigenToDM(m_data.uref);
         p_val_list.push_back(x0_dm);

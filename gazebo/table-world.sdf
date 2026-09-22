@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <sdf version="1.9">
-  <world name="grasp_world">
+  <world name="grasp-world">
 
     <!-- Physics -->
     <physics name="1ms" type="ignored">
@@ -80,7 +80,7 @@
         <pose>0 0 0.63 0.0 0.0 0.0</pose>
       </include>
     </model>
-
+    <!--
     <include>
       <uri> https://fuel.gazebosim.org/1.0/OpenRobotics/models/BedsideTable2 </uri>
       <name> bedside_table </name>
@@ -91,6 +91,7 @@
       <uri> https://fuel.gazebosim.org/1.0/GoogleResearch/models/Threshold_Basket_Natural_Finish_Fabric_Liner_Small </uri>
       <pose> -.35 0 1.5 0 0 0 </pose>
     </include>
+    -->
 
     <!--
     <include>
