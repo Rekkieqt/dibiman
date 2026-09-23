@@ -5,6 +5,7 @@
 #include <yarp/os/ResourceFinder.h>
 #include <yarp/dev/PolyDriver.h>
 #include <yarp/dev/ITorqueControl.h>
+#include <yarp/dev/MultipleAnalogSensorsInterfaces.h>
 #include <yarp/dev/IControlMode.h>
 #include <yarp/dev/IPositionControl.h>
 #include <yarp/dev/IEncoders.h>
@@ -66,13 +67,13 @@ int main(int argc, char **argv)
     /* __________________________________________ YARP NETWORKING __________________________________________ */
 
     /* findGroup -> find a list and save it as a Bottle, useful for later */
-    std::string right_robotName = "icubSim";/* icubSim */
-    std::string right_partName = "right_arm"; /* {ARM}_arm */
-    std::string right_local = "/right_arm_controller"; /* /{ARM}_arm_controller */
+    const std::string right_robotName = "icubSim"; /* icubSim */
+    const std::string right_partName = "right_arm"; /* {ARM}_arm */
+    const std::string right_local = "/right_arm_controller"; /* /{ARM}_arm_controller */
 
-    std::string left_robotName = "icubSim"; /* icubSim */
-    std::string left_partName = "left_arm"; /* {ARM}_arm */
-    std::string left_local = "/left_arm_controller"; /* /{ARM}_arm_controller */
+    const std::string left_robotName = "icubSim"; /* icubSim */
+    const std::string left_partName = "left_arm"; /* {ARM}_arm */
+    const std::string left_local = "/left_arm_controller"; /* /{ARM}_arm_controller */
 
 
     /* __________________________________________ Right Arm __________________________________________ */
@@ -112,7 +113,7 @@ int main(int argc, char **argv)
     ok = ok && right_robotDevice.view(right_torqueControl);
     ok = ok && right_robotDevice.view(right_encoders);
     ok = ok && right_robotDevice.view(right_axInfo);
-    
+
     if (!ok) {
         yError("Problems acquiring interfaces\n");
         return 0;
@@ -160,6 +161,44 @@ int main(int argc, char **argv)
         yError("Problems acquiring interfaces\n");
         return 0;
     }
+
+    /* __________________________________________ Force Sensor Test __________________________________________  */
+
+    Property r_ft_options;
+
+    r_ft_options.put("device", "multipleanalogsensorsclient");
+    r_ft_options.put("remote", "/icubSim/right_arm/FT");
+    r_ft_options.put("local", "/right_ft_sensor");
+
+    PolyDriver r_ft_sens(r_ft_options);
+
+    if (!r_ft_sens.isValid()) {
+        yError("FT Sensor not available.\n");
+        return 0;
+    }
+
+    ISixAxisForceTorqueSensors* r_ft;
+    ok = r_ft_sens.view(r_ft);
+
+    if (!ok) {
+        yError("Problems acquiring interfaces\n");
+        return 0;
+    }
+
+    size_t num_r_ft = r_ft->getNrOfSixAxisForceTorqueSensors();
+    std::cout << "Num sesors: " << num_r_ft << "\n";
+    for (size_t i = 0; i < num_r_ft; i++) {
+        std::string name;
+        r_ft->getSixAxisForceTorqueSensorName(i, name);
+
+        const size_t ft_dim = 6;
+        yarp::sig::Vector wrench(ft_dim);
+        Eigen::Map<Eigen::VectorXd> wrench_vec(wrench.data(), ft_dim);
+        double timestamp;
+        r_ft->getSixAxisForceTorqueSensorMeasure(i, wrench, timestamp);
+        std::cout << wrench_vec.transpose() << std::endl;
+    }
+    return 0;
 
     /* __________________________________________ ARM CONTROL START __________________________________________  */
 

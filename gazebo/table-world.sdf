@@ -76,7 +76,7 @@
 
     <model name="iCub">
       <include>
-        <uri>model://iCubGazeboV2_5_visuomanip</uri>
+        <uri>model://iCubGazeboV2_5_feet_fixed</uri>
         <pose>0 0 0.63 0.0 0.0 0.0</pose>
       </include>
     </model>
