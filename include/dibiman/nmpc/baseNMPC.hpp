@@ -31,18 +31,6 @@ namespace dibiman {
             /* list of manipulator data type */
             std::vector<icubArm> armList;
 
-            pinocchio::Model::ConfigVectorType inverseKinematics(
-                const pinocchio::Model & model,  
-                pinocchio::Data & data,  
-                const pinocchio::Model::ConfigVectorType & q0,
-                const pinocchio::SE3 & Href,
-                const pinocchio::FrameIndex frame_id,
-                const std::string & target);
-
-            pinocchio::Model getArmModel(
-                const std::string & modelpath,
-                const std::vector<std::string> & list_joints_to_use);
-
             casadi::Function rnea(const icubArm & _arm);
 
             casadi::Function inverseModel(const int n_dim);
@@ -59,8 +47,12 @@ namespace dibiman {
                     );
 
             void getNewData(void);
+            
+            void setObjectFrame(const pinocchio::SE3 &);
 
             void verifyManipulatorList(void);
+
+            void setObjectFrame(const pinocchio::SE3 &, const std::map<std::string, Eigen::VectorXd> & );
 
             virtual void createOCP(void) = 0;
 

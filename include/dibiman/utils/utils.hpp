@@ -1,5 +1,5 @@
-#ifndef __dibiman_utils__
-#define __dibiman_utils__
+#ifndef __dibiman_utils_utils__
+#define __dibiman_utils_utils__
 
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
@@ -79,4 +79,4 @@ void logRef(std::fstream & reffile, Eigen::VectorXd& qref, int size) {
 }
 
 */
-#endif //__dibiman_utils__
+#endif //__dibiman_utils_utils__

@@ -22,6 +22,7 @@
 /* NMPC libraries */
 #include "dibiman/nmpc/centralizedNMPC.hpp"
 #include "dibiman/utils/utils.hpp"
+#include "dibiman/utils/robot.hpp"
 
 using namespace pinocchio;
 
@@ -149,7 +150,7 @@ int main(int argc, char **argv)
     Eigen::Map<Eigen::VectorXd> v_r_ref_vec(v_r_ref_arr, n_dim);
     v_r_ref_vec.setZero();
 
-    q_r_ref_vec = manip_controller.inverseKinematics(
+    q_r_ref_vec = dibiman::inverseKinematics(
             right_model,
             right_data,
             qi_r,
@@ -170,7 +171,7 @@ int main(int argc, char **argv)
     Eigen::Map<Eigen::VectorXd> v_l_ref_vec(v_l_ref_arr, n_dim);
     v_l_ref_vec.setZero();
 
-    q_l_ref_vec = manip_controller.inverseKinematics(
+    q_l_ref_vec = dibiman::inverseKinematics(
             left_model,
             left_data,
             qi_l,

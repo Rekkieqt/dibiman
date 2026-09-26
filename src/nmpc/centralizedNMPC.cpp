@@ -76,9 +76,19 @@ centralizedNMPC::createOCP(void) {
         g.push_back(Ul[k] - ul_k);  
       
         // Hand-alignment constraint via jac_h  
+        // SX err = armList[1].jac_h(std::vector<SX>{Xr[k+1]}).at(0) - armList[1].jac_h(std::vector<SX>{Xl[k+1]}).at(0);  
+        // g.push_back(err);  
+    }    
+
+    /* 
+    for (int k = 0; k <H; ++k)
+    {
+        // Hand-alignment constraint via jac_h  
         SX err = armList[1].jac_h(std::vector<SX>{Xr[k+1]}).at(0) - armList[1].jac_h(std::vector<SX>{Xl[k+1]}).at(0);  
         g.push_back(err);  
-    }    
+
+    }
+    */
 
     for (int i = 0; i < H; ++i) 
     {
@@ -145,20 +155,13 @@ std::map<std::string, casadi::DM>
 centralizedNMPC::solve(const std::map<std::string, armTargetParams> & manipulator_datas)
 {  
     using namespace casadi;
-    /*
-       Eigen::VectorXd ex = ...;
-       std::vector<double> temp(ex.data(), ex.data() + ex.size()) 
-       DM ex_dm = DM(temp);
-    */
     std::vector<DM> p_val_list;
-    for (auto arm = armList.begin();
-            arm != armList.end();
-            ++arm)
+    for (auto arm = armList.begin(); arm != armList.end(); ++arm)
     {
         const armTargetParams & m_data = manipulator_datas.at(arm->id);
-        DM x0_dm = eigenToDM(m_data.x0);
-        DM xref_dm = eigenToDM(m_data.xref);
-        DM uref_dm = eigenToDM(m_data.uref);
+        const DM x0_dm = eigenToDM(m_data.x0);
+        const DM xref_dm = eigenToDM(m_data.xref);
+        const DM uref_dm = eigenToDM(m_data.uref);
         p_val_list.push_back(x0_dm);
         p_val_list.push_back(xref_dm);
         p_val_list.push_back(uref_dm);
@@ -175,7 +178,7 @@ centralizedNMPC::solve(const std::map<std::string, armTargetParams> & manipulato
     DMDict res = solver(arg);
 
     DM x_opt = res.at("x");
-    std::map<std::string, DM> u_star;
+    static std::map<std::string, DM> u_star;
 
     /*
     0, (H+1)*nx = Xr

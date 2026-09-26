@@ -76,8 +76,12 @@
 
     <model name="iCub">
       <include>
-        <uri>model://iCubGazeboV2_5_feet_fixed</uri>
+        <uri>model://iCubGazeboV2_5_visuomanip</uri>
         <pose>0 0 0.63 0.0 0.0 0.0</pose>
+        <!--
+        <uri>model://iCubGazeboV2_5_feet_fixed</uri>
+        <pose>0 0 0 0 0 3.14</pose>
+        -->
       </include>
     </model>
 
@@ -90,7 +94,7 @@
     <include>
       <uri> https://fuel.gazebosim.org/1.0/OpenRobotics/models/BedsideTable2 </uri>
       <name> bedside_table </name>
-      <pose> -.4 0 -.30 0 0 0 </pose>
+      <pose> -.4 0 -.35 0 0 0 </pose>
     </include>
 
     <!--

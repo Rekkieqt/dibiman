@@ -11,6 +11,7 @@ namespace dibiman
     {
         public:
             std::string id;
+            std::string hand_name;
 
             pinocchio::Model model;
             pinocchio::Data data;
