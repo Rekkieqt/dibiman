@@ -19,14 +19,14 @@ RIGHT_ARM_DOT_INI_PATH="$PWD/../conf/right_arm.ini"
 BINARY_PATH="$PWD/../build/gz-cub-bim"
 
 # Start servers
-yarpserver --write --silent &
+yarpserver --write --silent >/dev/null 2>&1 &
 YARPSERVER_PID=$!
 
 if [[ $1 ]]; then
-  gz sim $GAZEBO_WORLD_PATH &
+  gz sim $GAZEBO_WORLD_PATH >/dev/null 2>&1 &
   GZSERVER_PID=$!
 else 
-  gz sim -s $GAZEBO_WORLD_PATH &
+  gz sim -s $GAZEBO_WORLD_PATH >/dev/null 2>&1 &
   GZSERVER_PID=$!
 fi
 

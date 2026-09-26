@@ -77,7 +77,6 @@ int main(int argc, char **argv)
     const std::string left_partName = "left_arm"; /* {ARM}_arm */
     const std::string left_local = "/left_arm_controller"; /* /{ARM}_arm_controller */
 
-
     /* __________________________________________ Right Arm __________________________________________ */
 
     /* configuring in and out ports */
@@ -164,6 +163,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    yarp::os::Time::delay(5);
     /* __________________________________________ Force Sensor Right __________________________________________  */
 
     /* 
@@ -298,6 +298,9 @@ int main(int argc, char **argv)
     v_r_vec.setZero();
 
     right_encoders->getEncoders(q_r_arr);
+    for (int i = 0; i < right_num_jnts; i++) {
+        std::cout << "qr[" << i << "] :" << q_r_arr[i] * (M_PI/180) << "\n";
+    }
     q_r_vec *= (M_PI/180);
 
     pinocchio::forwardKinematics(right_model, right_data, q_r_vec);
@@ -316,6 +319,9 @@ int main(int argc, char **argv)
     v_l_vec.setZero();
 
     left_encoders->getEncoders(q_l_arr);
+    for (int i = 0; i < left_num_jnts; i++) {
+        std::cout << "ql[" << i << "] :" << q_l_arr[i] * (M_PI/180) << "\n";
+    }
     q_l_vec *= (M_PI/180);
 
     pinocchio::forwardKinematics(left_model, left_data, q_l_vec);
@@ -332,17 +338,20 @@ int main(int argc, char **argv)
     std::map<std::string, Eigen::VectorXd> jointData;
     jointData[ids[0]] = q_r_vec;
     jointData[ids[1]] = q_l_vec;
-    manip_controller.setObjectFrame(object_frame, jointData);
+    // manip_controller.setObjectFrame(object_frame, jointData);
 
     /* ______________ Object Based Reference Creation (UNUSED FOR NOW) ______________ */
 
-    const Eigen::VectorXd & middle_pos = object_pos;
+    const Eigen::VectorXd right_pos_ref = right_arm_pos + Eigen::Vector3d(0.00, 0.00, 0.15);
+    const Eigen::VectorXd left_pos_ref = left_arm_pos + Eigen::Vector3d(0.00, 0.00, 0.15);
 
-    const Eigen::Matrix3d r_R = right_data.oMf[manip_controller.armList[0].hand_id].rotation();
-    const pinocchio::SE3 r_H_ref(r_R, middle_pos);
+    const Eigen::Matrix3d r_R = right_data.oMf[right_hand_id].rotation();
+    const pinocchio::SE3 r_H_ref(r_R, right_pos_ref);
+    std::cout << "Right H ref : " << r_H_ref << std::endl;
 
-    const Eigen::Matrix3d l_R = left_data.oMf[manip_controller.armList[1].hand_id].rotation();
-    const pinocchio::SE3 l_H_ref(l_R, middle_pos);
+    const Eigen::Matrix3d l_R = left_data.oMf[left_hand_id].rotation();
+    const pinocchio::SE3 l_H_ref(l_R, left_pos_ref);
+    std::cout << "Left H ref : " << l_H_ref << std::endl;
 
     /* ______________ Make the hands meet in the middle (basic grasp) ______________ */
 
@@ -365,32 +374,35 @@ int main(int argc, char **argv)
     // const pinocchio::FrameIndex right_object_id = manip_controller.armList[0].object_id;
     Eigen::VectorXd q_r_ref_vec = dibiman::inverseKinematics(
             right_model,
-            manip_controller.armList[0].data,
+            right_data,
             q_r_vec,
             r_H_ref,
-            manip_controller.armList[0].hand_id,
+            right_hand_id,
             "full"
             );
     std::cout << "q r ref :" << q_r_ref_vec.transpose() << std::endl;
     Eigen::VectorXd v_r_ref_vec(n_dim);
     v_r_ref_vec.setZero();
 
-    Eigen::VectorXd u_r_ref_vec = pinocchio::rnea(manip_controller.armList[0].model, manip_controller.armList[0].data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
+    Eigen::VectorXd u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
+    std::cout << "u r ref: " << u_r_ref_vec.transpose() << std::endl;
 
     // const pinocchio::FrameIndex left_object_id = manip_controller.armList[1].object_id;
     Eigen::VectorXd q_l_ref_vec = dibiman::inverseKinematics(
             left_model,
-            manip_controller.armList[1].data,
+            left_data,
             q_l_vec,
             l_H_ref,
-            manip_controller.armList[1].hand_id,
+            left_hand_id,
             "full"
             );
+
     std::cout << "q l ref :" << q_l_ref_vec.transpose() << std::endl;
     Eigen::VectorXd v_l_ref_vec(n_dim);
     v_l_ref_vec.setZero();
 
-    Eigen::VectorXd u_l_ref_vec = pinocchio::rnea(manip_controller.armList[1].model, manip_controller.armList[1].data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
+    Eigen::VectorXd u_l_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
+    std::cout << "u l ref: " << u_l_ref_vec.transpose() << std::endl;
 
     /* ____________ Solver Structs Init _________________ */
 
@@ -443,19 +455,19 @@ int main(int argc, char **argv)
         double* u_r = u_star.at(ids[0]).ptr();
         double* u_l = u_star.at(ids[1]).ptr();
 
-        static bool ok = right_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_r);
+        bool ok = right_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_r);
         if (!ok) return 1;
         ok = left_torqueControl->setRefTorques(static_cast<int>(n_dim), joint_idx_arr, u_l);
         if (!ok) return 1;
 
-        static double timestamp;
-        static const size_t ft_dim = 6;
+        // static double timestamp;
+        // static const size_t ft_dim = 6;
 
-        static yarp::sig::Vector r_wrench(ft_dim);
-        static Eigen::Map<Eigen::VectorXd> r_wrench_vec(r_wrench.data(), ft_dim);
+        // static yarp::sig::Vector r_wrench(ft_dim);
+        // static Eigen::Map<Eigen::VectorXd> r_wrench_vec(r_wrench.data(), ft_dim);
 
-        static yarp::sig::Vector l_wrench(ft_dim);
-        static Eigen::Map<Eigen::VectorXd> l_wrench_vec(l_wrench.data(), ft_dim);
+        // static yarp::sig::Vector l_wrench(ft_dim);
+        // static Eigen::Map<Eigen::VectorXd> l_wrench_vec(l_wrench.data(), ft_dim);
 
         // r_ft->getSixAxisForceTorqueSensorMeasure(0, r_wrench, timestamp);
         // l_ft->getSixAxisForceTorqueSensorMeasure(0, l_wrench, timestamp);
@@ -468,8 +480,9 @@ int main(int argc, char **argv)
         // std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
         std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
 
+        yarp::os::Time::delay(0.05);
+
         worldControl(5, "grasp-world");
-        yarp::os::Time::delay(0.1);
 
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
         // pinocchio::updateFramePlacements(reduced_model, data);  

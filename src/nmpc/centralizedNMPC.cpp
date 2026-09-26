@@ -38,7 +38,7 @@ centralizedNMPC::createOCP(void) {
     SX x0_l = SX::sym("x0_l", nx), xref_l = SX::sym("xref_l", nx), uref_l = SX::sym("uref_l", nu); 
 
     std::vector<SX> Xr, Ur, Ar, Xl, Ul, Al;
-    for (int k = 0; k < H; ++k) {  
+    for (int k = 0; k < H; ++k) {
         Xr.push_back(SX::sym("Xr"+std::to_string(k), nx));
         Ur.push_back(SX::sym("Ur"+std::to_string(k), nu));
         Ar.push_back(SX::sym("Ar"+std::to_string(k), na));
@@ -48,10 +48,10 @@ centralizedNMPC::createOCP(void) {
         Al.push_back(SX::sym("Al"+std::to_string(k), na));
     }  
 
-    Xr.push_back(SX::sym("Xr"+std::to_string(H+1), nx));
-    Xl.push_back(SX::sym("Xl"+std::to_string(H+1), nx));
+    Xr.push_back(SX::sym("Xr"+std::to_string(H), nx));
+    Xl.push_back(SX::sym("Xl"+std::to_string(H), nx));
 
-    DM Ru = 1 * DM::eye(nu);  
+    DM Ru = .2 * DM::eye(nu);  
     DM Qx = 7 * DM::eye(nx);  
     DM Qa = DM::eye(na);  
   
@@ -80,15 +80,13 @@ centralizedNMPC::createOCP(void) {
         // g.push_back(err);  
     }    
 
-    /* 
-    for (int k = 0; k <H; ++k)
+    for (int k = 0; k < H; ++k)
     {
         // Hand-alignment constraint via jac_h  
-        SX err = armList[1].jac_h(std::vector<SX>{Xr[k+1]}).at(0) - armList[1].jac_h(std::vector<SX>{Xl[k+1]}).at(0);  
+        SX err = armList[0].jac_h(std::vector<SX>{Xr[k+1]}).at(0) - armList[1].jac_h(std::vector<SX>{Xl[k+1]}).at(0);  
         g.push_back(err);  
 
     }
-    */
 
     for (int i = 0; i < H; ++i) 
     {
@@ -121,7 +119,6 @@ centralizedNMPC::createOCP(void) {
     Dict solver_options;  
     solver_options["print_time"] = false;  
     solver_options["ipopt.print_level"] = 0;  
-    solver_options["ipopt.tol"] = 1e-3;  
   
     solver = nlpsol("solver", "ipopt", nlp, solver_options);  
 
