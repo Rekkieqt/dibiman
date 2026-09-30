@@ -43,6 +43,9 @@
 #include <gz/transport/Node.hh>
 #include <gz/msgs/world_control.pb.h>
 #include <gz/msgs/boolean.pb.h>
+#include <gz/sim/Util.hh>
+#include <gz/sim/Model.hh>
+#include <gz/sim/Link.hh>
 
 using namespace yarp::os;
 using namespace yarp::dev;
@@ -163,7 +166,47 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    yarp::os::Time::delay(5);
+    Time::delay(3);
+
+    /* __________________________________________ Gazebo read object pose ___________________________________________ */
+
+    worldControl(0, "grasp-world", false);
+
+    Property cfg;  
+    cfg.put("device", "multipleanalogsensorsclient");  
+    cfg.put("remote", "/cube-basestate");       // must match NWS "name" param  
+    cfg.put("local",  "/object/cube-basestate");  
+  
+    PolyDriver object_client(cfg);  
+    if (!object_client.isValid()) {
+        yError("(object) Device not available.\n");
+        return 0;
+    }
+  
+    IPositionSensors* gz_object_pos = nullptr;  
+    IOrientationSensors* gz_object_ori = nullptr;  
+    object_client.view(gz_object_pos);  
+    object_client.view(gz_object_ori);  
+  
+    /*
+    yarp::sig::Vector p, rpy;  
+    // Eigen::Map<Eigen::VectorXd> p_vec(p.data(), 3);
+    double ts;  
+  
+    // object_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
+
+    for (int i = 0; i < 100; i++)
+    {
+        if (gz_object_pos->getPositionSensorMeasure(0, p, ts))
+        {
+            Eigen::Map<Eigen::VectorXd> p_vec(p.data(), p.size());
+            std::cout << "object pos:" << p_vec.transpose() << "\n\n";
+            std::cout << "object pos string:" << p.toString() << "\n\n";
+        }  
+        Time::delay(0.05);  
+    }
+    */
+
     /* __________________________________________ Force Sensor Right __________________________________________  */
 
     /* 
@@ -298,9 +341,6 @@ int main(int argc, char **argv)
     v_r_vec.setZero();
 
     right_encoders->getEncoders(q_r_arr);
-    for (int i = 0; i < right_num_jnts; i++) {
-        std::cout << "qr[" << i << "] :" << q_r_arr[i] * (M_PI/180) << "\n";
-    }
     q_r_vec *= (M_PI/180);
 
     pinocchio::forwardKinematics(right_model, right_data, q_r_vec);
@@ -319,9 +359,6 @@ int main(int argc, char **argv)
     v_l_vec.setZero();
 
     left_encoders->getEncoders(q_l_arr);
-    for (int i = 0; i < left_num_jnts; i++) {
-        std::cout << "ql[" << i << "] :" << q_l_arr[i] * (M_PI/180) << "\n";
-    }
     q_l_vec *= (M_PI/180);
 
     pinocchio::forwardKinematics(left_model, left_data, q_l_vec);
@@ -338,7 +375,7 @@ int main(int argc, char **argv)
     std::map<std::string, Eigen::VectorXd> jointData;
     jointData[ids[0]] = q_r_vec;
     jointData[ids[1]] = q_l_vec;
-    // manip_controller.setObjectFrame(object_frame, jointData);
+    manip_controller.setObjectFrame(object_frame, jointData);
 
     /* ______________ Object Based Reference Creation (UNUSED FOR NOW) ______________ */
 
@@ -436,6 +473,7 @@ int main(int argc, char **argv)
     worldControl(0, "grasp-world", false);
 
     for (;;) {
+
         left_encoders->getEncoders(q_l_arr);
         right_encoders->getEncoders(q_r_arr);
 
@@ -480,25 +518,15 @@ int main(int argc, char **argv)
         // std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
         std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
 
-        yarp::os::Time::delay(0.05);
+        Time::delay(0.03);
 
         worldControl(5, "grasp-world");
 
         // pinocchio::forwardKinematics(reduced_model, data, q_sens_Vec);  
         // pinocchio::updateFramePlacements(reduced_model, data);  
-        // std::cout << data.oMf[handID] << std::endl;
-
-        /* send torque commands */
-        // ok = torqueControl->setRefTorques(joints, idx_joints, tau);
-
-        /* write to file */
-        // logData(file, tau_v, q_meas_v, joints);
 
         /* send info to other node(arm) */
-        
     }
-    /* cleanup, effectively useless because at the moment I ctrl+c from while */
-    /* later can put this into 'graceful' exit with interrupt ... */
 
     right_robotDevice.close();
     left_robotDevice.close();

@@ -13,12 +13,13 @@ export ICUB_MODEL_PATH="/home/ubuntu/dibiman/conf/model.urdf"
 export YARP_QUIET=1
 
 # Script variables
-GAZEBO_WORLD_PATH="$PWD/../gazebo/table-world.sdf"
+GAZEBO_WORLD_PATH="$PWD/../gazebo/grasp-world/grasp-world.sdf"
 LEFT_ARM_DOT_INI_PATH="$PWD/../conf/left_arm.ini"
 RIGHT_ARM_DOT_INI_PATH="$PWD/../conf/right_arm.ini"
 BINARY_PATH="$PWD/../build/gz-cub-bim"
 
 # Start servers
+export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:~/dibiman/gazebo
 yarpserver --write --silent >/dev/null 2>&1 &
 YARPSERVER_PID=$!
 
