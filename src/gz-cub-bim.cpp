@@ -207,6 +207,47 @@ int main(int argc, char **argv)
     }
     */
 
+    /* __________________________________________ Gazebo read icub pose ___________________________________________ */
+
+    worldControl(0, "grasp-world", false);
+
+    Property icub_cfg;  
+    icub_cfg.put("device", "multipleanalogsensorsclient");  
+    icub_cfg.put("remote", "/icub-basestate");       // must match NWS "name" param  
+    icub_cfg.put("local",  "/robot/icub-basestate");  
+  
+    PolyDriver icub_client(icub_cfg);  
+    if (!icub_client.isValid()) {
+        yError("(icub) Device not available.\n");
+        return 0;
+    }
+  
+    IPositionSensors* icub_pos = nullptr;
+    IOrientationSensors* icub_ori = nullptr;  
+    icub_client.view(icub_pos);  
+    icub_client.view(icub_ori);  
+  
+    /*
+    yarp::sig::Vector p, rpy;  
+    // Eigen::Map<Eigen::VectorXd> p_vec(p.data(), 3);
+    double ts;  
+  
+    // icub_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
+
+    for (int i = 0; i < 100; i++)
+    {
+        if (icub_pos->getPositionSensorMeasure(0, p, ts) && icub_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts))
+        {
+            Eigen::Map<Eigen::VectorXd> p_vec(p.data(), p.size());
+            Eigen::Map<Eigen::VectorXd> rpy_vec(rpy.data(), rpy.size());
+            std::cout << "icub pos:" << p_vec.transpose() << "\n\n";
+            std::cout << "icub rpy:" << rpy_vec.transpose() << "\n\n";
+        }  
+        Time::delay(0.05);  
+    }
+    return 0;
+    */
+
     /* __________________________________________ Force Sensor Right __________________________________________  */
 
     /* 
@@ -510,13 +551,13 @@ int main(int argc, char **argv)
         // r_ft->getSixAxisForceTorqueSensorMeasure(0, r_wrench, timestamp);
         // l_ft->getSixAxisForceTorqueSensorMeasure(0, l_wrench, timestamp);
 
-        std::cout << "Right x: " << right_params.x0.transpose() << "\n";
+        // std::cout << "Right x: " << right_params.x0.transpose() << "\n";
         // std::cout << "Right Wrench: " << r_wrench_vec.transpose() << "\n";
-        std::cout << "Right Torque: " << u_star.at(ids[0]) << "\n\n";
+        // std::cout << "Right Torque: " << u_star.at(ids[0]) << "\n\n";
 
-        std::cout << "Left x: " << left_params.x0.transpose() << "\n";
+        // std::cout << "Left x: " << left_params.x0.transpose() << "\n";
         // std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
-        std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
+        // std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
 
         Time::delay(0.03);
 

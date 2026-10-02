@@ -13,6 +13,9 @@ find_package(gz-sim REQUIRED)
 find_package(gz-msgs REQUIRED)
 find_package(gz-transport REQUIRED)
 
+# Fatrop Testing
+option(FATROP_EXAMPLE "Build the fatrop testing" ON)
+
 # simulator exe name and path
 set(EXECUTABLE_NAME cub-bim)
 
@@ -53,6 +56,11 @@ target_compile_options(${EXECUTABLE_NAME} PUBLIC -Wall -O0)
 
 target_link_libraries(${EXECUTABLE_NAME} PRIVATE
   casadi::casadi pinocchio::pinocchio Eigen3::Eigen)
+
+# =============== Fatrop Testing Executable =====================
+if(FATROP_EXAMPLE)
+    add_subdirectory(fatrop_test)
+endif()
 
 # For debugging libraries
 # message(STATUS "CASADI_INCLUDE_DIRS = ${CASADI_INCLUDE_DIRS}")  

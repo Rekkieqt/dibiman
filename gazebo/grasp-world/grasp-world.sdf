@@ -76,6 +76,17 @@
       <include>
         <uri>model://iCubGazeboV2_5_visuomanip</uri>
         <pose>0 0 0.63 0.0 0.0 0.0</pose>
+
+        <plugin name="gzyarp::BaseState" filename="gz-sim-yarp-basestate-system">
+            <yarpConfigurationString>
+                (yarpDeviceName icub_basestate_device) (baseLink root_link)
+            </yarpConfigurationString>
+        </plugin>
+
+        <plugin name="gzyarp::RobotInterface" filename="gz-sim-yarp-robotinterface-system">
+            <yarpRobotInterfaceConfigurationFile>model://grasp-world/icub_basestate_nws.xml </yarpRobotInterfaceConfigurationFile>
+        </plugin>
+
         <!--
         <uri>model://iCubGazeboV2_5_feet_fixed</uri>
         <pose>0 0 0 0 0 3.14</pose>
@@ -94,7 +105,7 @@
         </plugin>
 
         <plugin name="gzyarp::RobotInterface" filename="gz-sim-yarp-robotinterface-system">
-            <yarpRobotInterfaceConfigurationFile>model://grasp-world/basestate_nws.xml </yarpRobotInterfaceConfigurationFile>
+            <yarpRobotInterfaceConfigurationFile>model://grasp-world/cube_basestate_nws.xml </yarpRobotInterfaceConfigurationFile>
         </plugin>
     </include>
 
