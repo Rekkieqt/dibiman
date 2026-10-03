@@ -17,3 +17,6 @@ find out if there is API to get c.o.m. of object and spatial info...
 # distributed theory
 apply object impedance with reduced polygonal cone force constraints in order to obtain common object velocity
 possibly extend existing impedance with tangent space rotational error
+
+# dibiman library
+add runtime new reference via yarp

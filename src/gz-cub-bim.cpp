@@ -166,11 +166,10 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    Time::delay(3);
-
     /* __________________________________________ Gazebo read object pose ___________________________________________ */
 
     worldControl(0, "grasp-world", false);
+    Time::delay(3);
 
     Property cfg;  
     cfg.put("device", "multipleanalogsensorsclient");  
@@ -188,13 +187,14 @@ int main(int argc, char **argv)
     object_client.view(gz_object_pos);  
     object_client.view(gz_object_ori);  
   
-    /*
-    yarp::sig::Vector p, rpy;  
-    // Eigen::Map<Eigen::VectorXd> p_vec(p.data(), 3);
-    double ts;  
+    yarp::sig::Vector gz_obj_p;
+    double ts;
+    while(!gz_object_pos->getPositionSensorMeasure(0, gz_obj_p, ts)) Time::delay(0.05);
+    // const Eigen::Vector3d gz_obj_p_vec(gz_obj_p.data());
+    Eigen::Map<Eigen::VectorXd> gz_obj_p_vec(gz_obj_p.data(), gz_obj_p.size());
   
-    // object_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
-
+    /*
+    object_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
     for (int i = 0; i < 100; i++)
     {
         if (gz_object_pos->getPositionSensorMeasure(0, p, ts))
@@ -224,16 +224,16 @@ int main(int argc, char **argv)
   
     IPositionSensors* icub_pos = nullptr;
     IOrientationSensors* icub_ori = nullptr;  
-    icub_client.view(icub_pos);  
-    icub_client.view(icub_ori);  
+    icub_client.view(icub_pos);
+    icub_client.view(icub_ori);
   
-    /*
-    yarp::sig::Vector p, rpy;  
-    // Eigen::Map<Eigen::VectorXd> p_vec(p.data(), 3);
-    double ts;  
-  
-    // icub_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
+    yarp::sig::Vector gz_icub_p;
+    while (!icub_pos->getPositionSensorMeasure(0, gz_icub_p, ts)) Time::delay(0.05);
+    Eigen::Map<Eigen::VectorXd> gz_icub_p_vec(gz_icub_p.data(), gz_icub_p.size());
+    // const Eigen::Vector3d gz_icub_p_vec(gz_icub_p.data());
 
+    /*
+    icub_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts);
     for (int i = 0; i < 100; i++)
     {
         if (icub_pos->getPositionSensorMeasure(0, p, ts) && icub_ori->getOrientationSensorMeasureAsRollPitchYaw(0, rpy, ts))
@@ -410,7 +410,7 @@ int main(int argc, char **argv)
     const Eigen::VectorXd right_arm_pos = right_data.oMf[right_hand_id].translation();
     const Eigen::VectorXd left_arm_pos = left_data.oMf[left_hand_id].translation();
 
-    Eigen::VectorXd object_pos = .5f * (right_arm_pos + left_arm_pos);
+    const Eigen::Vector3d object_pos = .5f * (right_arm_pos + left_arm_pos);
     pinocchio::SE3 object_frame(Eigen::Matrix3d::Identity(), object_pos);
 
     std::map<std::string, Eigen::VectorXd> jointData;
@@ -420,16 +420,25 @@ int main(int argc, char **argv)
 
     /* ______________ Object Based Reference Creation (UNUSED FOR NOW) ______________ */
 
-    const Eigen::VectorXd right_pos_ref = right_arm_pos + Eigen::Vector3d(0.00, 0.00, 0.15);
-    const Eigen::VectorXd left_pos_ref = left_arm_pos + Eigen::Vector3d(0.00, 0.00, 0.15);
+    // std::cout << "right curr H: " << right_data.oMf[right_hand_id] << std::endl;
+    // std::cout << "left curr H: " << left_data.oMf[left_hand_id] << std::endl;
 
-    const Eigen::Matrix3d r_R = right_data.oMf[right_hand_id].rotation();
+    Eigen::VectorXd cub_to_obj_vec = gz_obj_p_vec - gz_icub_p_vec;
+    std::cout << "gazebo obj pose rel: " << cub_to_obj_vec.transpose() << std::endl;
+
+    const Eigen::Vector3d right_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.05, 0.05);
+    const Eigen::Vector3d left_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, -.05, 0.05);
+
+    const Eigen::Matrix3d r_R = Eigen::Matrix3d::Identity(3, 3);
     const pinocchio::SE3 r_H_ref(r_R, right_pos_ref);
     std::cout << "Right H ref : " << r_H_ref << std::endl;
+    // const Eigen::Matrix3d r_curr_R = right_data.oMf[right_hand_id].rotation();
 
-    const Eigen::Matrix3d l_R = left_data.oMf[left_hand_id].rotation();
+    const Eigen::Vector3d rpy_left_arm(0, 0, -M_PI);
+    const Eigen::Matrix3d l_R = pinocchio::rpy::rpyToMatrix(rpy_left_arm);
     const pinocchio::SE3 l_H_ref(l_R, left_pos_ref);
     std::cout << "Left H ref : " << l_H_ref << std::endl;
+    // const Eigen::Matrix3d l_curr_R = left_data.oMf[left_hand_id].rotation();
 
     /* ______________ Make the hands meet in the middle (basic grasp) ______________ */
 
@@ -458,12 +467,12 @@ int main(int argc, char **argv)
             right_hand_id,
             "full"
             );
-    std::cout << "q r ref :" << q_r_ref_vec.transpose() << std::endl;
+    std::cout << "q r ref : " << q_r_ref_vec.transpose() << std::endl;
     Eigen::VectorXd v_r_ref_vec(n_dim);
     v_r_ref_vec.setZero();
 
     Eigen::VectorXd u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
-    std::cout << "u r ref: " << u_r_ref_vec.transpose() << std::endl;
+    std::cout << "u r ref : " << u_r_ref_vec.transpose() << std::endl;
 
     // const pinocchio::FrameIndex left_object_id = manip_controller.armList[1].object_id;
     Eigen::VectorXd q_l_ref_vec = dibiman::inverseKinematics(
@@ -475,7 +484,7 @@ int main(int argc, char **argv)
             "full"
             );
 
-    std::cout << "q l ref :" << q_l_ref_vec.transpose() << std::endl;
+    std::cout << "q l ref : " << q_l_ref_vec.transpose() << std::endl;
     Eigen::VectorXd v_l_ref_vec(n_dim);
     v_l_ref_vec.setZero();
 
@@ -512,6 +521,7 @@ int main(int argc, char **argv)
     }
 
     worldControl(0, "grasp-world", false);
+    constexpr double degToPi = (M_PI/180);
 
     for (;;) {
 
@@ -522,10 +532,10 @@ int main(int argc, char **argv)
         right_encoders->getEncoderSpeeds(v_r_arr);
 
         left_params.x0 << q_l_vec, v_l_vec;
-        left_params.x0 *= (M_PI/180);
+        left_params.x0 *= degToPi;
 
         right_params.x0 << q_r_vec, v_r_vec;
-        right_params.x0 *= (M_PI/180);
+        right_params.x0 *= degToPi;
 
         bimanual_solve_params[ids[0]] = right_params;
         bimanual_solve_params[ids[1]] = left_params;
@@ -559,7 +569,17 @@ int main(int argc, char **argv)
         // std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
         // std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
 
-        Time::delay(0.03);
+        Time::delay(0.01);
+
+        pinocchio::forwardKinematics(right_model, right_data, q_r_vec * degToPi);
+        pinocchio::updateFramePlacements(left_model, right_data);
+
+        std::cout << "right pos: " << right_data.oMf[right_hand_id].translation().transpose() << "\n";
+        
+        pinocchio::forwardKinematics(left_model, left_data, q_l_vec * degToPi);
+        pinocchio::updateFramePlacements(left_model, left_data);
+
+        std::cout << "left pos: " << left_data.oMf[left_hand_id].translation().transpose() << "\n";
 
         worldControl(5, "grasp-world");
 

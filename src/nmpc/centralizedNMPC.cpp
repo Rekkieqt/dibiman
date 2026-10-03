@@ -51,9 +51,9 @@ centralizedNMPC::createOCP(void) {
     Xr.push_back(SX::sym("Xr"+std::to_string(H), nx));
     Xl.push_back(SX::sym("Xl"+std::to_string(H), nx));
 
-    DM Ru = .2 * DM::eye(nu);  
-    DM Qx = 7 * DM::eye(nx);  
-    DM Qa = DM::eye(na);  
+    DM Ru = .1 * DM::eye(nu);  
+    DM Qx = 10 * DM::eye(nx);  
+    DM Qa = .1 * DM::eye(na);  
   
     SX obj = 0;
     std::vector<SX> g; // Equality constraints
@@ -80,6 +80,7 @@ centralizedNMPC::createOCP(void) {
         // g.push_back(err);  
     }    
 
+    /*
     for (int k = 0; k < H; ++k)
     {
         // Hand-alignment constraint via jac_h  
@@ -87,6 +88,7 @@ centralizedNMPC::createOCP(void) {
         g.push_back(err);  
 
     }
+    */
 
     for (int i = 0; i < H; ++i) 
     {

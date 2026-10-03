@@ -13,6 +13,7 @@ export ICUB_MODEL_PATH="/home/ubuntu/dibiman/conf/model.urdf"
 export YARP_QUIET=1
 
 # Script variables
+# CURR_DIR="$(cd "dirname "${BASH_SOURCE[0]}")" && pwd)" # todo--
 GAZEBO_WORLD_PATH="$PWD/../gazebo/grasp-world/grasp-world.sdf"
 LEFT_ARM_DOT_INI_PATH="$PWD/../conf/left_arm.ini"
 RIGHT_ARM_DOT_INI_PATH="$PWD/../conf/right_arm.ini"

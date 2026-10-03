@@ -6,7 +6,7 @@
         <device name="basestate_nws_yarp" type="multipleanalogsensorsserver">
             <!-- See https://www.yarp.it/latest/classMultipleAnalogSensorsServer.html for parameter documentation -->
             <param name="name"> /cube-basestate </param>
-            <param name="period"> 50 </param>
+            <param name="period"> 5 </param>
             <action phase="startup" level="5" type="attach">
                 <!-- This is the same name that we passed with the yarpDeviceName to the basestate plugin -->
                 <param name="device"> basestate_plugin_device </param>
