@@ -52,8 +52,11 @@ centralizedNMPC::createOCP(void) {
     Xl.push_back(SX::sym("Xl"+std::to_string(H), nx));
 
     DM Ru = .1 * DM::eye(nu);  
-    DM Qx = 10 * DM::eye(nx);  
+    DM Qq = 50 * DM::eye(na);  
+    DM Qv = 5 * DM::eye(na);  
+    DM Qx = diagcat(Qq, Qv);
     DM Qa = .1 * DM::eye(na);  
+    DM QxN = 500 * DM::eye(nx);  
   
     SX obj = 0;
     std::vector<SX> g; // Equality constraints
@@ -100,6 +103,9 @@ centralizedNMPC::createOCP(void) {
         obj += SX::mtimes({(Ul[i]   - uref_l).T(), Ru,  Ul[i]   - uref_l});
         obj += SX::mtimes({Al[i].T(), Qa, Al[i]});
     }
+
+    obj += SX::mtimes({(Xl[H] - xref_l).T(), QxN, Xl[H] - xref_l});
+    obj += SX::mtimes({(Xr[H] - xref_r).T(), QxN, Xr[H] - xref_r});
   
     // SX X = vertcat(vertcat(Xr), vertcat(Xl), vertcat(Ur), vertcat(Ul), vertcat(Ar), vertcat(Al));  
     SX X = vertcat(vertcat(Xr), vertcat(Ur), vertcat(Ar), vertcat(Xl), vertcat(Ul), vertcat(Al));  

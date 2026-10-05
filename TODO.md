@@ -3,6 +3,8 @@ appending hand to object frame systematically + update kinematics -> done
 
 # gz-cub-bim
 making the yarp api access cleaner
+try inbuilt Ikin
+try inbuilt position control directly to achieve initial grasp
 
 # fatrop
 compile simple euclidian joint tracking
@@ -12,7 +14,7 @@ wrapping Eigen in blasfeo -> in examples/eigen_to_blasfeo.cpp
 make use of the inverse kinematics example (its rather quick)
 
 # gazebo
-find out if there is API to get c.o.m. of object and spatial info...
+find out if there is API to get c.o.m. of object and spatial info... -> done through gz-sim-yarp-plugins
 
 # distributed theory
 apply object impedance with reduced polygonal cone force constraints in order to obtain common object velocity
