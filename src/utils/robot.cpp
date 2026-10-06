@@ -93,7 +93,7 @@ namespace dibiman {
       
     pinocchio::Model
     getArmModel(const std::string & modelpath,  
-                          const std::vector<std::string> & list_joints_to_use)
+                const std::vector<std::string> & list_joints_to_use)
     {  
         using namespace pinocchio;
 
