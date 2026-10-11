@@ -23,3 +23,23 @@ blasfeo_unpack_dmat(m, n, &sA, 0, 0, Be.data(), Be.outerStride());
   
 blasfeo_free_dmat(&sA);  
 blasfeo_free_dvec(&sx);
+
+/* +++++++++++++++++++++++ blasfeo to Eigen - vectors +++++++++++++++++++++++ */
+
+struct blasfeo_dvec = sx;
+int m = sx.m;
+
+Eigen::VectorXd x(m);
+blasfeo_unpack_dvec(m, &sx, 0, x.data(), 1);
+
+/* +++++++++++++++++++++++ blasfeo to Eigen - matrices +++++++++++++++++++++++ */
+
+Eigen::MatrixXd A(m, n);
+
+struct blasfeo_dmat sA;
+blasfeo_allocate_dmat(m, n, &sA);
+blasfeo_pack_dmat(m, n, A.data(), A.outerStride(), &sA, 0, 0);
+
+// ... use sA ...
+
+blasfeo_free_dmat(&sA);
