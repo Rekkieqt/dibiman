@@ -394,19 +394,19 @@ int main(int argc, char **argv)
     pinocchio::SE3 & right_hand_frame = right_data.oMf[right_hand_id];
     pinocchio::SE3 & left_hand_frame = left_data.oMf[left_hand_id];
 
-    /* ______________ Object grasp movement 1 - hover ______________ */
+    /* ______________ Multiple point structure ______________ */
 
-    // std::cout << right_hand_frame << std::endl;
-    // std::cout << pinocchio::rpy::matrixToRpy(right_hand_frame.rotation()) << std::endl;
-    // 
-    // std::cout << left_hand_frame << std::endl;
-    // std::cout << pinocchio::rpy::matrixToRpy(left_hand_frame.rotation()) << std::endl;
+    typedef std::pair<Eigen::VectorXd, Eigen::VectorXd> q_u_RefPair;
+    typedef std::pair<q_u_RefPair, q_u_RefPair> BimanualPair;
+    typedef std::vector<BimanualPair> TrajectoryList;
+
+    /* ______________ Object grasp movement 1 - hover ______________ */
 
     Eigen::VectorXd cub_to_obj_vec = gz_obj_p_vec - gz_icub_p_vec;
     std::cout << "gazebo obj pose rel: " << cub_to_obj_vec.transpose() << std::endl;
 
-    const Eigen::Vector3d right_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.1, 0.0); // Eigen::Vector3d(cub_to_obj_vec[0], right_arm_pos[1], cub_to_obj_vec[2]);
-    const Eigen::Vector3d left_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, -.1, 0.0); // Eigen::Vector3d(cub_to_obj_vec[0], left_arm_pos[1], cub_to_obj_vec[2]);
+    const Eigen::Vector3d right_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.1, 0.0);
+    const Eigen::Vector3d left_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, -.1, 0.0);
 
     const Eigen::Vector3d right_rpy(M_PI/2.0f, M_PI, 0);
     const Eigen::Matrix3d r_R = pinocchio::rpy::rpyToMatrix(right_rpy);
@@ -422,8 +422,8 @@ int main(int argc, char **argv)
 
     /* ______________ Object grasp movement 2 - closure ______________ */
 
-    const Eigen::Vector3d right_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.05, 0.0);
-    const Eigen::Vector3d left_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, -.05, 0.0);
+    const Eigen::Vector3d right_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.04, 0.0);
+    const Eigen::Vector3d left_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, -.04, 0.0);
 
     const pinocchio::SE3 r_H_ref_2(r_R, right_pos_ref_2);
     const pinocchio::SE3 l_H_ref_2(l_R, left_pos_ref_2);
@@ -499,11 +499,11 @@ int main(int argc, char **argv)
 
     right_params.x0 << q_r_vec, v_r_vec;
     right_params.xref << q_r_ref_vec, v_r_ref_vec;
-    right_params.uref = u_r_ref_vec;
+    right_params.uref << u_r_ref_vec;
 
     left_params.x0 << q_l_vec, v_l_vec;
     left_params.xref << q_l_ref_vec, v_l_ref_vec;
-    left_params.uref = u_l_ref_vec;
+    left_params.uref << u_l_ref_vec;
 
     std::map<std::string, casadi::DM> u_star;
     u_star[ids[0]] = casadi::DM::zeros(n_dim);
@@ -517,10 +517,10 @@ int main(int argc, char **argv)
     }
 
     worldControl(0, "grasp-world", false);
-    constexpr double eps = 0.08;
 
     std::cout << "Initiating Hover" << std::endl;
     
+    constexpr double eps = 0.08;
     for (int i = 0;; i++) {
 
         left_encoders->getEncoders(q_l_arr);

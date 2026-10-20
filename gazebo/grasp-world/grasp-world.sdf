@@ -28,6 +28,11 @@
       <render_engine>ogre2</render_engine>
     </plugin>
     -->
+    <plugin
+        filename='gz-sim-scene-broadcaster-system'
+        name='gz::sim::systems::SceneBroadcaster'>
+      <state_hertz>25</state_hertz>
+    </plugin>
 
     <!-- Sun light -->
     <light type="directional" name="sun">
@@ -76,7 +81,6 @@
       <include>
         <uri>model://iCubGazeboV2_5_visuomanip</uri>
         <pose>0 0 0.63 0.0 0.0 0.0</pose>
-
         <plugin name="gzyarp::BaseState" filename="gz-sim-yarp-basestate-system">
             <yarpConfigurationString>
                 (yarpDeviceName icub_basestate_device) (baseLink root_link)

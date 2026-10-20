@@ -11,6 +11,8 @@
 #include "fatrop/ocp/problem_info.hpp"
 #include <type_traits>
 
+#include <omp.h>
+
 namespace fatrop
 {
     namespace internal
@@ -173,6 +175,7 @@ namespace fatrop
                                                const VecRealView &primal_s, Jacobian<OcpType> &jac)
     {
         const Scalar *primal_x_p = primal_x.data();
+#pragma omp parallel for schedule(static)
         for (Index k = 0; k < info.dims.K; k++)
         {
             const Scalar *inputs_k = primal_x_p + info.offsets_primal_u[k];
@@ -196,6 +199,7 @@ namespace fatrop
     {
         const Scalar *primal_x_p = primal_x.data();
         Scalar *res_p = res.data();
+#pragma omp parallel for schedule(static)
         for (Index k = 0; k < info.dims.K; k++)
         {
             const Scalar *inputs_k = primal_x_p + info.offsets_primal_u[k];

@@ -1,13 +1,16 @@
 #include <limits>
 #include <filesystem>
 #include <memory>
+#include <omp.h>
 #include <fatrop/fatrop.hpp>
-#include "fatrop/ocp/nlp_ocp.hxx"
+// #include "fatrop/ocp/nlp_ocp.hxx"
+#include "nlp_ocp.hxx"
 #include "dibiman/utils/robot.hpp"
 
 #include "pinocchio/eigen-common.hpp"
 #include "pinocchio/algorithm/model.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
+#include "pinocchio/algorithm/parallel/rnea.hpp"
 // #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
 
@@ -34,41 +37,24 @@ class RobotModel
     protected:
         pinocchio::Model _model;
         pinocchio::Data _data;
+        std::unique_ptr<pinocchio::ModelPool> _pool;
         int nx;
         int nu;
+        int nq;
+        const size_t n_threads = 8;
 
-        // Pinocchio preallocated data
-        Eigen::VectorXd _q;
-        Eigen::VectorXd _v;
-        Eigen::VectorXd _a;
-        Eigen::VectorXd _tau;
-
-        // RNEA 1st derivative
-        Eigen::MatrixXd djoint_torque_dq;
-        Eigen::MatrixXd djoint_torque_dv;
-        Eigen::MatrixXd djoint_torque_da;
-        //
-        // Jacobian 1st derivative 
-        // Eigen::MatrixXd JacobianDerivative;
-        //
         void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use) {
             _model = dibiman::getArmModel(modelpath, list_joints_to_use);
             _data = pinocchio::Data(_model);
+            _pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
+            nq = _model.nv;
+            nx = nq * 2;
+            nu = nq * 2;
         };
         void allocateEigenMatrices(const int & nv) {
-            nx = nv * 2; // q + v : state
-            nu = nv * 2; // a + tau : control
-
-            _q.resize(nq);
-            _v.resize(nq);
-            _a.resize(nq);
-            _tau.resize(nq);
-
-            djoint_torque_dq.resize(nq);
-            djoint_torque_dv.resize(nq);
-            djoint_torque_da.resize(nq);
-
-            // rneaDerivative.resize(nx, nu);
+            nq = nv;
+            nx = nv * 2; // q + v : xk
+            nu = nv * 2; // a + tau : uk
             // JacobianDerivative.resize(nx, nu);
         }
 
@@ -90,18 +76,14 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints)
         {
             initPinData(modelpath, joints);
-            allocateEigenMatrices(_model.nv);
+            /* allocateEigenMatrices(_model.nv); */
         }
 
         Index get_nx(const Index k) const { return nx; }
 
         Index get_nu(const Index k) const
         {
-            if (k == 0)
-            {
-                return nu;
-            }
-            else if (k == K_ - 1)
+            if (k == K_ - 1)
             {
                 return 0;
             }
@@ -111,25 +93,19 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             }
         }
 
-        /**
-         * @brief Get the number of inequality constraints for a given time step.
-         * @param k Time step
-         * @return Number of inequality constraints
-         */
-
         Index get_ng(const Index k) const
         {
             if (k == 0)
             {
-                return _model.nv;
+                return nx + nq;
             }
             else if (k == K_ - 1)
             {
-                return _model.nv;
+                return 0;
             }
             else
             {
-                return 0;
+                return nq;
             }
         };
 
@@ -138,27 +114,24 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         Index eval_BAbt(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                         MAT *res, const Index k)
         {
+            /* from original example
+            col:            0      1      2        3       ← next-state index (transposed!)
+            (u0) row 0  [   0      0     dt/m      0   ]   ← B^T  
+            (u1) row 1  [   0      0     dt/m(u1-1) dt/m]  
+            (x0) row 2  [   1      0      0        0   ]  
+            (x1) row 3  [   0      1      0        0   ]   ← A^T  
+            (x2) row 4  [   dt     0      1        0   ]  
+            (x3) row 5  [   0      dt     0        1   ]             
+            */
             // set zero
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-            // Matrix B
-            // [  0,    0        ]
-            // [  0,    0        ]
-            // [ dt/m,  dt/m*fy  ]
-            // [  0,    dt/m     ]
 
-            // Matrix A
-            // [ 1,  0,  dt,  0  ]
-            // [ 0,  1,   0,  dt ]
-            // [ 0,  0,   1,  0  ]
-            // [ 0,  0,   0,  1  ]
-
-            blasfeo_matel_wrap(res, 0, 2) = dt_ / m_;
-            blasfeo_matel_wrap(res, 1, 3) = dt_ / m_;
-            blasfeo_matel_wrap(res, 1, 2) = dt_ / m_ * (inputs_k[1] - 1.);
-
-            blasfeo_diare_wrap(4, 1.0, res, 2, 0);
-            blasfeo_matel_wrap(res, 4, 0) = dt_;
-            blasfeo_matel_wrap(res, 5, 1) = dt_;
+            // B.T
+            blasfeo_diare_wrap(nq, 1.f, res, 0, nq); 
+            // A.T
+            blasfeo_diare_wrap(nq, 1.f, res, nx, 0); 
+            blasfeo_diare_wrap(nq, dt_, res, nx + nq, 0); 
+            blasfeo_diare_wrap(nq, 1.f, res, nx + nq, nq); 
             return 0;
         }
         Index eval_RSQrqt(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
@@ -167,15 +140,18 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             // set zero
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-            // Matrix R
-            // [ 2,  0 ]
-            // [ 0,  2 ]
-            if (k < K_ - 1)
+            if (k == 0)
             {
-                blasfeo_diare_wrap(2, objective_scale[0] * 2.0, res, 0, 0);
-                // add the contribution from the nonlinearity in the dynamics
-                Scalar lam = lam_dyn_k[2];
-                blasfeo_matel_wrap(res, 1, 1) += dt_ * lam / m_;
+                blasfeo_diare_wrap(nu, 1.f, res, 0, 0);
+            }
+            else if (k == K_ - 1)
+            {
+                blasfeo_diare_wrap(nx, 20.f, res, 0, 0);
+            }
+            else
+            {
+                blasfeo_diare_wrap(nu, 1.0f, res, 0, 0);
+                blasfeo_diare_wrap(nx, 10.0f, res, nu, nu);
             }
             return 0;
         };
@@ -197,29 +173,54 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
          */
         Index eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
         {
-            // Put RNEA and Jacobian Derivatives here
-            computeRNEADerivatives(_model, _data, q, v, a, djoint_torque_dq, djoint_torque_dv, djoint_torque_da);
+            if (k == K_ - 1) return 0;
 
+            const int thread_id = omp_get_thread_num();
+            const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
+            pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
+
+            // Put RNEA and Jacobian Derivatives here
+            Eigen::Map<const Eigen::VectorXd> _q  (states_k,      nq);
+            Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
+            Eigen::Map<const Eigen::VectorXd> _a  (inputs_k,      nq);
+            computeRNEADerivatives(_model, _data, _q, _v, _a);
+
+            /// \note The results are stored in data.dtau_dq, data.dtau_dv and data.M which respectively
+            /// correspond
+            ///          to the partial derivatives of the joint torque vector with respect to the joint
+            ///          configuration, velocity and acceleration. As for pinocchio::crba, only the upper
+            ///          triangular part of data.M is filled.
+
+            // set zero
+            blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+            pinocchio::make_symmetric(_data.M);
+
+            blasfeo_pack_dmat(_data.M.rows(), _data.M.cols(), _data.M.data(), _data.M.outerStride(), res, 0, 0);
+            blasfeo_diare_wrap(nq, -1.f, res, nq, 0);
+            blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, 0);
+            blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, 0);
+
+            if (k == 0)
+            {
+                // wrong index
+                blasfeo_diare_wrap(nx, 1.f, res, nu, nq); // ai check, apparently its all transpose so additional h(uk, xk) are columns
+            }
+            return 0;
             /* RNEA constraint
              * h(q, v, a, tau) = rnea(q, v, a) - tau = 0
              * dh/da, dh/dtau, dh/dq, dh/dv = dh/d(uk, xk)
              * dh/dtau = I_nq 
+             * Ggt = [data.M, I, data.dtau_dq, data.dtau_dv]
+             * 
              *
              * Jacobian constraint
              * h(q, v, a, tau) = J(q) * v - (numerical v_des)
              * dh/da, dh/dtau, dh/dq, dh/da = dh/d(uk, xk)
+             * [0, 0, dh/dq, J(q)] = dh/d(uk, xk)
              * dh/da = 0
              * dh/dtau = 0
              * dh/duk = 0
              */
-
-            // set zero
-            blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-            if (k == 0)
-                blasfeo_diare_wrap(4, 1.0, res, 2, 0);
-            if (k == K_ - 1)
-                blasfeo_diare_wrap(4, 1.0, res, 0, 0);
-            return 0;
         }
 
         /**
@@ -234,11 +235,13 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         Index eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                      Scalar *res, const Index k)
         {
-            res[0] = -states_kp1[0] + states_k[0] + dt_ * states_k[2];
-            res[1] = -states_kp1[1] + states_k[1] + dt_ * states_k[3];
-            res[2] = -states_kp1[2] + states_k[2] + dt_ * inputs_k[0] / m_ +
-                     dt_ * 0.5 * (inputs_k[1] - 1.) * (inputs_k[1] - 1.) / m_;
-            res[3] = -states_kp1[3] + states_k[3] + dt_ * inputs_k[1] / m_;
+            // set zero fo k == 0 also sets the initial state to zero
+            // blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+            for (int i = 0; i < nq; ++i)
+            {
+                res[i] = -states_kp1[i] + states_k[i] + dt_ * states_k[i + nq];
+                res[i + nq] = -states_kp1[i + nq] + states_k[i + nq] + inputs_k[i];
+            }
             return 0;
         }
 
@@ -256,55 +259,102 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
 
         Index eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
         {
-            _tau = pinocchio::rnea(_model, _data, _q, _v, _a);
+            const int thread_id = omp_get_thread_num();
+            const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
+            pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
+
+            if (k == K_ - 1) { return 0; }
+            else
+            {
+                Eigen::Map<const Eigen::VectorXd> _q  (states_k,      nq);
+                Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
+                Eigen::Map<const Eigen::VectorXd> _a  (inputs_k,      nq);
+
+                pinocchio::rnea(_model, _data, _q, _v, _a);
+                for (int i = 0; i < nq; ++i)
+                {
+                    res[i] = _data.tau[i] - inputs_k[nq + i];
+                }
+            }
+
             if (k == 0)
             {
-                res[0] = states_k[0];
-                res[1] = states_k[1];
-                res[2] = states_k[2];
-                res[3] = states_k[3];
-            }
-            else if (k == K_ - 1)
-            {
-                res[0] = states_k[0] - 1.0;
-                res[1] = states_k[1] - 2.0;
-                res[2] = states_k[2] - 3.0;
-                res[3] = states_k[3] - 4.0;
+                for (int i = 0; i < nq; ++i)
+                {
+                    // initial state is 0
+                    res[nq + i] = states_k[i]; // - ...
+                    res[nx + i] = states_k[i + nq]; // - ...
+                }
             }
             return 0;
         };
         Index eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
                       Scalar *res, const Index k)
         {
+            /**
+            * @brief Evaluate the gradient of the objective function.
+            *
+            * This method evaluates the gradient of the objective function (not the Lagrangian!)
+            * with respect to the concatenation of (u_k, x_k).
+            *
+            * @param objective_scale Pointer to objective scale
+            * @param inputs_k Pointer to array inputs of time step k
+            * @param states_k Pointer to array states of time step k
+            * @param res Pointer to (nu+nx)-array
+            * @param k Time step
+            * @return Status code
+            */
+            // blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
             if (k == K_ - 1)
             {
-                res[0] = 0.;
-                res[1] = 0.;
-                res[2] = 0.;
-                res[3] = 0.;
+                for (int i = 0; i < nx; ++i)
+                {
+                    res[i] = 20 * states_k[i];
+                }
+            }
+            else if (k == 0)
+            {
+                for (int i = 0; i < nu; ++i)
+                {
+                    res[i] = 2 * inputs_k[i];
+                    res[nu + i] = 10 * states_k[nu + i];
+                }
             }
             else
             {
-                res[0] = 2 * objective_scale[0] * inputs_k[0];
-                res[1] = 2 * objective_scale[0] * inputs_k[1];
-                res[2] = 0.;
-                res[3] = 0.;
-                res[4] = 0.;
-                res[5] = 0.;
-                res[6] = 0.;
+                for (int i = 0; i < nx; ++i)
+                {
+                    res[i] = 2 * inputs_k[i];
+                    res[nx + i] = 10 * states_k[i];
+                }
             }
             return 0;
         }
         Index eval_L(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
                      Scalar *res, const Index k)
         {
-            if (k == K_ - 1)
+            *res = 0.0;
+            if (k == 0)
             {
-                *res = 0.;
+                for (int i = 0; i < nx; ++i)
+                {
+                    *res+= inputs_k[i] * inputs_k[i];
+                }
+            }
+            else if (k == K_ - 1)
+            {
+                for (int i = 0; i < nx; ++i)
+                {
+                    *res+= 10 * states_k[i] * states_k[i];
+                }
             }
             else
             {
-                *res = objective_scale[0] * (inputs_k[0] * inputs_k[0] + inputs_k[1] * inputs_k[1]);
+                for (int i = 0; i < nx; ++i)
+                {
+                    *res+= inputs_k[i] * inputs_k[i] + 5 * states_k[i] * states_k[i];
+                }
+
             }
             return 0;
         }
@@ -323,24 +373,23 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
 
         Index get_initial_xk(Scalar *xk, const Index k) const
         {
-            xk[0] = 0.;
-            xk[1] = 0.;
-            xk[2] = 0.;
-            xk[3] = 0.;
+            // xk[0] = 0.;
+            // xk[1] = 0.;
+            // xk[2] = 0.;
+            // xk[3] = 0.;
             return 0;
         };
         Index get_initial_uk(Scalar *uk, const Index k) const
         {
-            if (k == K_ - 1)
-                return 0;
-            uk[0] = 0.;
-            uk[1] = 0.;
+            // if (k == K_ - 1)
+            //     return 0;
+            // uk[0] = 0.;
+            // uk[1] = 0.;
             return 0;
         };
 
     private:
-        const Index K_ = 100;
-        const Scalar m_ = 1.0;
+        const Index K_ = 50;
         const Scalar dt_ = 0.05;
 };
 
@@ -348,13 +397,18 @@ int main()
 {
     const std::string modelpath = static_cast<std::string>(std::filesystem::current_path()) + "/../../conf/model.urdf";
     const std::vector<std::string> joint_list = {"r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw"};
+    constexpr int n_threads = 4;
+    omp_set_num_threads(n_threads);
+
     auto problem = std::make_shared<ManipulatorOcp>(modelpath, joint_list);
 
     IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<RobotManipulator>>(problem));
 
     std::shared_ptr<IpAlgorithm<OcpType>> ipalg = builder.build();
     IpSolverReturnFlag ret = ipalg->optimize();
+    auto data = builder.get_ipdata();
     std::cout << "Return flag: " << int(ret) << std::endl;
     std::cout << "Return flag == success: " << (ret == IpSolverReturnFlag::Success) << std::endl;
+    std::cout << data->timing_statistics() << std::endl;
     return 0;
 }
