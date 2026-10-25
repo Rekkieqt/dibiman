@@ -13,6 +13,7 @@
 #include "pinocchio/algorithm/parallel/rnea.hpp"
 // #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
+#include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
 
 using namespace fatrop;
 
@@ -23,25 +24,53 @@ using namespace fatrop;
  *
  */
 
-// example problem 2D point mass with a small nonlinearity in the dynamics
-// states: [x, y, vx, vy]
-// inputs: [fx, fy]
-// dynamics: [xk+1 = xk + dt*vxk, yk+1 = yk + dt*vyk, vxk+1 = vxk + dt*fx/m +0.5*dt*fy**2/m, vyk+1
-// = vyk + dt*fy/m] cost: fx^2 + fy^2
-// constraints:
-//  at k = 0: x = 0, y = 0, vx = 0, vy = 0
-//  at k = K: x = 1, y = 1, vx = 0, vy = 0
-
 class RobotModel
 {
     protected:
         pinocchio::Model _model;
         pinocchio::Data _data;
         std::unique_ptr<pinocchio::ModelPool> _pool;
+
         int nx;
         int nu;
         int nq;
         const size_t n_threads = 8;
+
+        struct _rnea_second_order_matrices {
+            Eigen::MatrixXd _qq;
+            Eigen::MatrixXd _qv;
+            Eigen::MatrixXd _vv;
+            Eigen::MatrixXd _aq;
+
+            _rnea_second_order_matrices() = default;
+
+            _rnea_second_order_matrices(const int nq) :
+                _qq(nq, nq),
+                _qv(nq, nq),
+                _vv(nq, nq),
+                _aq(nq, nq)
+            {}
+
+            void setZero(void)
+            {
+                _qq.setZero();
+                _qv.setZero();
+                _vv.setZero();
+                _aq.setZero();
+            }
+        };
+
+        std::vector<_rnea_second_order_matrices> _mat_pool;
+
+        // cost matrices
+        const double _Qq_k = 10;
+        const double _Qv_k = 5;
+
+        const double _Qa_k = 1;
+        const double _Qtau_k = 1;
+
+        const double _Qq_N = 50;
+        const double _Qv_N = 25;
 
         void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use) {
             _model = dibiman::getArmModel(modelpath, list_joints_to_use);
@@ -50,13 +79,15 @@ class RobotModel
             nq = _model.nv;
             nx = nq * 2;
             nu = nq * 2;
+            _mat_pool.reserve(n_threads);
+            for (int i = 0; i < n_threads; ++i)
+            {
+                _rnea_second_order_matrices temp(nq);
+                _mat_pool.push_back(temp);
+                // _mat_pool.emplace(nq); dafuq?
+            }
         };
-        void allocateEigenMatrices(const int & nv) {
-            nq = nv;
-            nx = nv * 2; // q + v : xk
-            nu = nv * 2; // a + tau : uk
-            // JacobianDerivative.resize(nx, nu);
-        }
+        // void allocateEigenMatrices(const int & nv) {}
 
 };
 
@@ -140,19 +171,69 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             // set zero
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+            if (k == K_ - 1)
+            {
+                blasfeo_diare_wrap(nx, 2 * _Qq_N, res, 0, 0);
+                return 0;
+            }
+
+            const int thread_id = omp_get_thread_num();
+            const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
+            pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
+            _rnea_second_order_matrices & _m = _mat_pool[(size_t)thread_id];
+            _m.setZero();
+
             if (k == 0)
             {
-                blasfeo_diare_wrap(nu, 1.f, res, 0, 0);
-            }
-            else if (k == K_ - 1)
-            {
-                blasfeo_diare_wrap(nx, 20.f, res, 0, 0);
+                blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
             }
             else
             {
-                blasfeo_diare_wrap(nu, 1.0f, res, 0, 0);
-                blasfeo_diare_wrap(nx, 10.0f, res, nu, nu);
+                blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
+                _m._qq.diagonal().array() += 2 * _Qq_k;
+                _m._vv.diagonal().array() += 2 * _Qq_k;
             }
+
+            // Put RNEA and Jacobian Derivatives here
+            Eigen::Map<const Eigen::VectorXd> _q  (states_k, nq);
+            Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
+            Eigen::Map<const Eigen::VectorXd> _a  (inputs_k, nq);
+            Eigen::Map<const Eigen::VectorXd> _lam_eq  (lam_eq_k, nq);
+
+            ComputeRNEASecondOrderDerivatives(_model, _data, _q, _v, _a);
+
+            /* 
+            Eigen::Map<const Eigen::MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
+            Eigen::Map<const Eigen::MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
+            Eigen::Map<const Eigen::MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
+            Eigen::Map<const Eigen::MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
+
+            Eigen::Map<Eigen::RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
+            Eigen::Map<Eigen::RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
+            Eigen::Map<Eigen::RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
+            Eigen::Map<Eigen::RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
+            */
+
+            blasfeo_pack_dmat(nq, nq,
+                    _m._qq.data(), _m._qq.outerStride(), 
+                    res, nx, nx);
+            blasfeo_pack_dmat(nq, nq,
+                    _m._vv.data(), _m._vv.outerStride(), 
+                    res, nx + nq, nx + nq);
+            blasfeo_pack_dmat(nq, nq,
+                    _m._qv.data(), _m._qv.outerStride(), 
+                    res, nx, nx + nq);
+            blasfeo_pack_dmat(nq, nq,
+                    _m._aq.data(), _m._aq.outerStride(), 
+                    res, 0, nx);
+
+            blasfeo_pack_tran_dmat(nq, nq,
+                    _m._qv.data(), _m._qv.outerStride(), 
+                    res, nx + nq, nx);
+            blasfeo_pack_tran_dmat(nq, nq,
+                    _m._aq.data(), _m._aq.outerStride(), 
+                    res, nx, 0);
+
             return 0;
         };
         /**
@@ -266,9 +347,9 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             if (k == K_ - 1) { return 0; }
             else
             {
-                Eigen::Map<const Eigen::VectorXd> _q  (states_k,      nq);
+                Eigen::Map<const Eigen::VectorXd> _q  (states_k, nq);
                 Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
-                Eigen::Map<const Eigen::VectorXd> _a  (inputs_k,      nq);
+                Eigen::Map<const Eigen::VectorXd> _a  (inputs_k, nq);
 
                 pinocchio::rnea(_model, _data, _q, _v, _a);
                 for (int i = 0; i < nq; ++i)
@@ -338,21 +419,21 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= inputs_k[i] * inputs_k[i];
+                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i];
                 }
             }
             else if (k == K_ - 1)
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= 10 * states_k[i] * states_k[i];
+                    *res+= _Qq_N * states_k[i] * states_k[i];
                 }
             }
             else
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= inputs_k[i] * inputs_k[i] + 5 * states_k[i] * states_k[i];
+                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i] + _Qq_k * states_k[i] * states_k[i];
                 }
 
             }
