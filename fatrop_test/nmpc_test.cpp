@@ -36,13 +36,18 @@ class RobotModel
         int nx;
         int nu;
         int nq;
-        const size_t n_threads = 8;
+        // const size_t n_threads = 8;
 
         struct _rnea_second_order_matrices {
-            MatrixXd _qq;
-            MatrixXd _qv;
-            MatrixXd _vv;
-            MatrixXd _aq;
+            // MatrixXd _qq;
+            // MatrixXd _qv;
+            // MatrixXd _vv;
+            // MatrixXd _aq;
+
+            Tensor<double, 2> _qq;
+            Tensor<double, 2> _qv;
+            Tensor<double, 2> _vv;
+            Tensor<double, 2> _aq;
 
             _rnea_second_order_matrices() = default;
 
@@ -65,16 +70,16 @@ class RobotModel
         std::vector<_rnea_second_order_matrices> _mat_pool;
 
         // cost matrices
-        const double _Qq_k = 10;
-        const double _Qv_k = 5;
+        const double _Qq_k = 1;
+        const double _Qv_k = 1;
 
         const double _Qa_k = 1;
         const double _Qtau_k = 1;
 
-        const double _Qq_N = 50;
-        const double _Qv_N = 25;
+        const double _Qq_N = 1;
+        const double _Qv_N = 1;
 
-        void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use) {
+        void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use, const int & n_threads) {
             _model = dibiman::getArmModel(modelpath, list_joints_to_use);
             _data = pinocchio::Data(_model);
             _pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
@@ -106,9 +111,9 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
      * nu = [a, tau]
      */
     public:
-        OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints)
+        OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints, const int & n_threads)
         {
-            initPinData(modelpath, joints);
+            initPinData(modelpath, joints, n_threads);
             /* allocateEigenMatrices(_model.nv); */
         }
 
@@ -173,10 +178,17 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             // set zero
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-            if (k == K_ - 1)
-            {
-                blasfeo_diare_wrap(nx, 2 * _Qq_N, res, 0, 0);
+            const Scalar s = objective_scale[0];
+
+            if (k == K_ - 1)          
+            {                              
+                blasfeo_diare_wrap(nx, s * 2 * _Qq_N, res, 0, 0);
                 return 0;
+            }                              
+            else                           
+            {                              
+                blasfeo_diare_wrap(nu, s * 2 * _Qtau_k, res, 0, 0);
+                // blasfeo_diare_wrap(nx, s * 2 * _Qq_k, res, nu, nu);
             }
 
             const int thread_id = omp_get_thread_num();
@@ -192,26 +204,18 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             Map<MatrixXd> _aq_mat(_m._aq.data(), nq, nq);
             */
 
-            if (k == 0)
-            {
-                blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
-            }
-            else
-            {
-                blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
-                blasfeo_diare_wrap(nx, 2 * _Qq_k, res, nu, nu);
-                // _m._qq.diagonal().array() += 2 * _Qq_k;
-                // _m._vv.diagonal().array() += 2 * _Qq_k;
-            }
+            // _m._qq.diagonal().array() += 2 * _Qq_k;
+            // _m._vv.diagonal().array() += 2 * _Qq_k;
 
             // Put RNEA and Jacobian Derivatives here
             Map<const VectorXd> _q  (states_k, nq);
             Map<const VectorXd> _v  (states_k + nq, nq);
             Map<const VectorXd> _a  (inputs_k, nq);
-            Map<const VectorXd> _lam_eq  (lam_eq_k, nq);
-            // TensorMap<const Tensor<double, 1>> _lam_eq  (lam_eq_k, nq);
+            // Map<const VectorXd> _lam_eq  (lam_eq_k, nq);
+            TensorMap<const Tensor<double, 1>> _lam_eq  (lam_eq_k, nq);
 
             ComputeRNEASecondOrderDerivatives(_model, _data, _q, _v, _a);
+            /*
             for (int i = 0; i < nq; ++i)
             {
                 for (int j = 0; j < nq; ++j)
@@ -225,27 +229,44 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                     }
                 }
             }
+            */
 
-            /* Tensor contraction
+            // Tensor contraction
             const Eigen::array<Eigen::IndexPair<int>, 1> dims = { Eigen::IndexPair<int>(0, 0) };
             _m._qq = _lam_eq.contract(_data.d2tau_dqdq, dims);
             _m._vv = _lam_eq.contract(_data.d2tau_dvdv, dims);
             _m._qv = _lam_eq.contract(_data.d2tau_dqdv, dims);
             _m._aq = _lam_eq.contract(_data.d2tau_dadq, dims);
-            */
 
-            /* Deep Wiki variation on pinocchio unittest
-            Map<const MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
+            Map<MatrixXd> _qq_mat(_m._qq.data(), nq, nq);
+            Map<MatrixXd> _vv_mat(_m._vv.data(), nq, nq);
+            Map<MatrixXd> _qv_mat(_m._qv.data(), nq, nq);
+            Map<MatrixXd> _aq_mat(_m._aq.data(), nq, nq);
 
-            Map<RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
-            Map<RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
-            Map<RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
-            Map<RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
-            */
+            _qq_mat.diagonal().array() += s * 2 * _Qq_k;
+            _vv_mat.diagonal().array() += s * 2 * _Qq_k;
 
+            blasfeo_pack_dmat(nq, nq,
+                    _qq_mat.data(), _qq_mat.outerStride(), 
+                    res, nx, nx);
+            blasfeo_pack_dmat(nq, nq,
+                    _vv_mat.data(), _vv_mat.outerStride(), 
+                    res, nx + nq, nx + nq);
+            blasfeo_pack_dmat(nq, nq,
+                    _qv_mat.data(), _qv_mat.outerStride(), 
+                    res, nx, nx + nq);
+            blasfeo_pack_dmat(nq, nq,
+                    _aq_mat.data(), _aq_mat.outerStride(), 
+                    res, 0, nx);
+
+            blasfeo_pack_tran_dmat(nq, nq,
+                    _qv_mat.data(), _qv_mat.outerStride(), 
+                    res, nx + nq, nx);
+            blasfeo_pack_tran_dmat(nq, nq,
+                    _aq_mat.data(), _aq_mat.outerStride(), 
+                    res, nx, 0);
+
+            /*
             blasfeo_pack_dmat(nq, nq,
                     _m._qq.data(), _m._qq.outerStride(), 
                     res, nx, nx);
@@ -265,7 +286,20 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_pack_tran_dmat(nq, nq,
                     _m._aq.data(), _m._aq.outerStride(), 
                     res, nx, 0);
+                    */
 
+
+            /* Deep Wiki variation on pinocchio unittest
+            Map<const MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
+
+            Map<RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
+            Map<RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
+            Map<RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
+            Map<RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
+            */
 
             return 0;
         };
@@ -317,7 +351,7 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             if (k == 0)
             {
                 // wrong index
-                blasfeo_diare_wrap(nx, 1.f, res, nu, nq); // ai check, apparently its all transpose so additional h(uk, xk) are columns
+                blasfeo_diare_wrap(nx, 1.f, res, nu, nq);
             }
             return 0;
             /* RNEA constraint
@@ -419,27 +453,20 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             * @return Status code
             */
             // blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+            const Scalar s = objective_scale[0];
             if (k == K_ - 1)
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    res[i] = 20 * states_k[i];
-                }
-            }
-            else if (k == 0)
-            {
-                for (int i = 0; i < nu; ++i)
-                {
-                    res[i] = 2 * inputs_k[i];
-                    res[nu + i] = 10 * states_k[nu + i];
+                    res[i] = 2 * _Qq_N * states_k[i] * s;
                 }
             }
             else
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    res[i] = 2 * inputs_k[i];
-                    res[nx + i] = 10 * states_k[i];
+                    res[i] = 2 * _Qtau_k * inputs_k[i] * s;
+                    res[nx + i] = 2 * _Qq_k * states_k[i] * s;
                 }
             }
             return 0;
@@ -448,25 +475,19 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                      Scalar *res, const Index k)
         {
             *res = 0.0;
-            if (k == 0)
+            const Scalar s = objective_scale[0];
+            if (k == K_ - 1)
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i];
-                }
-            }
-            else if (k == K_ - 1)
-            {
-                for (int i = 0; i < nx; ++i)
-                {
-                    *res+= _Qq_N * states_k[i] * states_k[i];
+                    *res+= _Qq_N * states_k[i] * states_k[i] * s;
                 }
             }
             else
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i] + _Qq_k * states_k[i] * states_k[i];
+                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i] * s + _Qq_k * states_k[i] * states_k[i] * s;
                 }
 
             }
@@ -514,7 +535,7 @@ int main()
     constexpr int n_threads = 4;
     omp_set_num_threads(n_threads);
 
-    auto problem = std::make_shared<ManipulatorOcp>(modelpath, joint_list);
+    auto problem = std::make_shared<ManipulatorOcp>(modelpath, joint_list, n_threads);
 
     IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<RobotManipulator>>(problem));
 
