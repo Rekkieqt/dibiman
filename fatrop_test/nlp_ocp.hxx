@@ -155,6 +155,7 @@ namespace fatrop
         const Scalar *primal_x_p = primal_x.data();
         const Scalar *primal_s_p = primal_s.data();
         const Scalar *lam_p = lam.data();
+#pragma omp parallel for schedule(static)
         for (Index k = 0; k < info.dims.K; k++)
         {
             const Scalar *inputs_k = primal_x_p + info.offsets_primal_u[k];

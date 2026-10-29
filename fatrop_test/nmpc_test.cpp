@@ -16,6 +16,8 @@
 #include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
 
 using namespace fatrop;
+using namespace Eigen;
+
 
 /**
  * This is an example on how to use a specialization for the OcpAbstractTpl class, rather than using
@@ -37,10 +39,10 @@ class RobotModel
         const size_t n_threads = 8;
 
         struct _rnea_second_order_matrices {
-            Eigen::MatrixXd _qq;
-            Eigen::MatrixXd _qv;
-            Eigen::MatrixXd _vv;
-            Eigen::MatrixXd _aq;
+            MatrixXd _qq;
+            MatrixXd _qv;
+            MatrixXd _vv;
+            MatrixXd _aq;
 
             _rnea_second_order_matrices() = default;
 
@@ -84,7 +86,7 @@ class RobotModel
             {
                 _rnea_second_order_matrices temp(nq);
                 _mat_pool.push_back(temp);
-                // _mat_pool.emplace(nq); dafuq?
+                //_mat_pool.emplace(i, nq);
             }
         };
         // void allocateEigenMatrices(const int & nv) {}
@@ -183,6 +185,13 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             _rnea_second_order_matrices & _m = _mat_pool[(size_t)thread_id];
             _m.setZero();
 
+            /*
+            Map<MatrixXd> _qq_mat(_m._qq.data(), nq, nq);
+            Map<MatrixXd> _vv_mat(_m._vv.data(), nq, nq);
+            Map<MatrixXd> _qv_mat(_m._qv.data(), nq, nq);
+            Map<MatrixXd> _aq_mat(_m._aq.data(), nq, nq);
+            */
+
             if (k == 0)
             {
                 blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
@@ -190,28 +199,51 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             else
             {
                 blasfeo_diare_wrap(nu, 2 * _Qtau_k, res, 0, 0);
-                _m._qq.diagonal().array() += 2 * _Qq_k;
-                _m._vv.diagonal().array() += 2 * _Qq_k;
+                blasfeo_diare_wrap(nx, 2 * _Qq_k, res, nu, nu);
+                // _m._qq.diagonal().array() += 2 * _Qq_k;
+                // _m._vv.diagonal().array() += 2 * _Qq_k;
             }
 
             // Put RNEA and Jacobian Derivatives here
-            Eigen::Map<const Eigen::VectorXd> _q  (states_k, nq);
-            Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
-            Eigen::Map<const Eigen::VectorXd> _a  (inputs_k, nq);
-            Eigen::Map<const Eigen::VectorXd> _lam_eq  (lam_eq_k, nq);
+            Map<const VectorXd> _q  (states_k, nq);
+            Map<const VectorXd> _v  (states_k + nq, nq);
+            Map<const VectorXd> _a  (inputs_k, nq);
+            Map<const VectorXd> _lam_eq  (lam_eq_k, nq);
+            // TensorMap<const Tensor<double, 1>> _lam_eq  (lam_eq_k, nq);
 
             ComputeRNEASecondOrderDerivatives(_model, _data, _q, _v, _a);
+            for (int i = 0; i < nq; ++i)
+            {
+                for (int j = 0; j < nq; ++j)
+                {
+                    for (int kk = 0; kk < nq; ++kk)
+                    {
+                        _m._qq(j, kk) += lam_eq_k[i] * _data.d2tau_dqdq(i, j, kk);
+                        _m._qv(j, kk) += lam_eq_k[i] * _data.d2tau_dqdv(i, j, kk);
+                        _m._vv(j, kk) += lam_eq_k[i] * _data.d2tau_dvdv(i, j, kk);
+                        _m._aq(j, kk) += lam_eq_k[i] * _data.d2tau_dadq(i, j, kk);
+                    }
+                }
+            }
 
-            /* 
-            Eigen::Map<const Eigen::MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
-            Eigen::Map<const Eigen::MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
-            Eigen::Map<const Eigen::MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
-            Eigen::Map<const Eigen::MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
+            /* Tensor contraction
+            const Eigen::array<Eigen::IndexPair<int>, 1> dims = { Eigen::IndexPair<int>(0, 0) };
+            _m._qq = _lam_eq.contract(_data.d2tau_dqdq, dims);
+            _m._vv = _lam_eq.contract(_data.d2tau_dvdv, dims);
+            _m._qv = _lam_eq.contract(_data.d2tau_dqdv, dims);
+            _m._aq = _lam_eq.contract(_data.d2tau_dadq, dims);
+            */
 
-            Eigen::Map<Eigen::RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
-            Eigen::Map<Eigen::RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
-            Eigen::Map<Eigen::RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
-            Eigen::Map<Eigen::RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
+            /* Deep Wiki variation on pinocchio unittest
+            Map<const MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
+            Map<const MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
+
+            Map<RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
+            Map<RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
+            Map<RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
+            Map<RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
             */
 
             blasfeo_pack_dmat(nq, nq,
@@ -233,6 +265,7 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_pack_tran_dmat(nq, nq,
                     _m._aq.data(), _m._aq.outerStride(), 
                     res, nx, 0);
+
 
             return 0;
         };
