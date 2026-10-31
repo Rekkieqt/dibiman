@@ -11,9 +11,15 @@
 #include "pinocchio/algorithm/model.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
 #include "pinocchio/algorithm/parallel/rnea.hpp"
-// #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
 #include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
+
+// #include "pinocchio/algorithm/jacobian.hpp"
+// #include "pinocchio/algorithm/joint-configuration.hpp"
+// #include "pinocchio/algorithm/kinematics.hpp"
+#include "pinocchio/algorithm/kinematics-derivatives.hpp"
+// #include "pinocchio/algorithm/frames.hpp"
+// #include "pinocchio/algorithm/frames-derivatives.hpp"
 
 using namespace fatrop;
 using namespace Eigen;
@@ -36,14 +42,8 @@ class RobotModel
         int nx;
         int nu;
         int nq;
-        // const size_t n_threads = 8;
 
         struct _rnea_second_order_matrices {
-            // MatrixXd _qq;
-            // MatrixXd _qv;
-            // MatrixXd _vv;
-            // MatrixXd _aq;
-
             Tensor<double, 2> _qq;
             Tensor<double, 2> _qv;
             Tensor<double, 2> _vv;
@@ -76,8 +76,16 @@ class RobotModel
         const double _Qa_k = 1;
         const double _Qtau_k = 1;
 
-        const double _Qq_N = 1;
-        const double _Qv_N = 1;
+        const double _Qq_N = 10;
+        const double _Qv_N = 10;
+
+        inline int get_nx_size(void) const { return nx; }
+        inline int get_nu_size(void) const { return nu; }
+        inline int get_nq_size(void) const { return nq; }
+
+        inline int get_xk_cost(void) const { return _Qq_k; }
+        inline int get_uk_cost(void) const { return _Qtau_k; }
+        inline int get_xN_cost(void) const { return _Qtau_k; }
 
         void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use, const int & n_threads) {
             _model = dibiman::getArmModel(modelpath, list_joints_to_use);
@@ -94,7 +102,6 @@ class RobotModel
                 //_mat_pool.emplace(i, nq);
             }
         };
-        // void allocateEigenMatrices(const int & nv) {}
 
 };
 
@@ -114,7 +121,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints, const int & n_threads)
         {
             initPinData(modelpath, joints, n_threads);
-            /* allocateEigenMatrices(_model.nv); */
         }
 
         Index get_nx(const Index k) const { return nx; }
@@ -152,15 +158,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         Index eval_BAbt(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                         MAT *res, const Index k)
         {
-            /* from original example
-            col:            0      1      2        3       ← next-state index (transposed!)
-            (u0) row 0  [   0      0     dt/m      0   ]   ← B^T  
-            (u1) row 1  [   0      0     dt/m(u1-1) dt/m]  
-            (x0) row 2  [   1      0      0        0   ]  
-            (x1) row 3  [   0      1      0        0   ]   ← A^T  
-            (x2) row 4  [   dt     0      1        0   ]  
-            (x3) row 5  [   0      dt     0        1   ]             
-            */
             // set zero
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
 
@@ -183,53 +180,30 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             if (k == K_ - 1)          
             {                              
                 blasfeo_diare_wrap(nx, s * 2 * _Qq_N, res, 0, 0);
-                return 0;
+                // return 0;
             }                              
             else                           
             {                              
                 blasfeo_diare_wrap(nu, s * 2 * _Qtau_k, res, 0, 0);
-                // blasfeo_diare_wrap(nx, s * 2 * _Qq_k, res, nu, nu);
+                blasfeo_diare_wrap(nx, s * 2 * _Qq_k, res, nu, nu);
             }
-
+            /*
             const int thread_id = omp_get_thread_num();
             const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
             pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
             _rnea_second_order_matrices & _m = _mat_pool[(size_t)thread_id];
             _m.setZero();
 
-            /*
-            Map<MatrixXd> _qq_mat(_m._qq.data(), nq, nq);
-            Map<MatrixXd> _vv_mat(_m._vv.data(), nq, nq);
-            Map<MatrixXd> _qv_mat(_m._qv.data(), nq, nq);
-            Map<MatrixXd> _aq_mat(_m._aq.data(), nq, nq);
-            */
-
-            // _m._qq.diagonal().array() += 2 * _Qq_k;
-            // _m._vv.diagonal().array() += 2 * _Qq_k;
+            _m._qq.diagonal().array() += 2 * _Qq_k;
+            _m._vv.diagonal().array() += 2 * _Qq_k;
 
             // Put RNEA and Jacobian Derivatives here
             Map<const VectorXd> _q  (states_k, nq);
             Map<const VectorXd> _v  (states_k + nq, nq);
             Map<const VectorXd> _a  (inputs_k, nq);
-            // Map<const VectorXd> _lam_eq  (lam_eq_k, nq);
             TensorMap<const Tensor<double, 1>> _lam_eq  (lam_eq_k, nq);
 
             ComputeRNEASecondOrderDerivatives(_model, _data, _q, _v, _a);
-            /*
-            for (int i = 0; i < nq; ++i)
-            {
-                for (int j = 0; j < nq; ++j)
-                {
-                    for (int kk = 0; kk < nq; ++kk)
-                    {
-                        _m._qq(j, kk) += lam_eq_k[i] * _data.d2tau_dqdq(i, j, kk);
-                        _m._qv(j, kk) += lam_eq_k[i] * _data.d2tau_dqdv(i, j, kk);
-                        _m._vv(j, kk) += lam_eq_k[i] * _data.d2tau_dvdv(i, j, kk);
-                        _m._aq(j, kk) += lam_eq_k[i] * _data.d2tau_dadq(i, j, kk);
-                    }
-                }
-            }
-            */
 
             // Tensor contraction
             const Eigen::array<Eigen::IndexPair<int>, 1> dims = { Eigen::IndexPair<int>(0, 0) };
@@ -265,60 +239,10 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_pack_tran_dmat(nq, nq,
                     _aq_mat.data(), _aq_mat.outerStride(), 
                     res, nx, 0);
-
-            /*
-            blasfeo_pack_dmat(nq, nq,
-                    _m._qq.data(), _m._qq.outerStride(), 
-                    res, nx, nx);
-            blasfeo_pack_dmat(nq, nq,
-                    _m._vv.data(), _m._vv.outerStride(), 
-                    res, nx + nq, nx + nq);
-            blasfeo_pack_dmat(nq, nq,
-                    _m._qv.data(), _m._qv.outerStride(), 
-                    res, nx, nx + nq);
-            blasfeo_pack_dmat(nq, nq,
-                    _m._aq.data(), _m._aq.outerStride(), 
-                    res, 0, nx);
-
-            blasfeo_pack_tran_dmat(nq, nq,
-                    _m._qv.data(), _m._qv.outerStride(), 
-                    res, nx + nq, nx);
-            blasfeo_pack_tran_dmat(nq, nq,
-                    _m._aq.data(), _m._aq.outerStride(), 
-                    res, nx, 0);
                     */
-
-
-            /* Deep Wiki variation on pinocchio unittest
-            Map<const MatrixXd> T_qq(_data.d2tau_dqdq.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_vv(_data.d2tau_dvdv.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_qv(_data.d2tau_dqdv.data(), nq, nq * nq);  
-            Map<const MatrixXd> T_aq(_data.d2tau_dadq.data(), nq, nq * nq);  
-
-            Map<RowVectorXd>(_m._qq.data(), nq*nq) = _lam_eq.transpose() * T_qq;
-            Map<RowVectorXd>(_m._vv.data(), nq*nq) = _lam_eq.transpose() * T_vv;
-            Map<RowVectorXd>(_m._qv.data(), nq*nq) = _lam_eq.transpose() * T_qv;
-            Map<RowVectorXd>(_m._aq.data(), nq*nq) = _lam_eq.transpose() * T_aq;
-            */
 
             return 0;
         };
-        /**
-         * @brief Evaluate the stagewise equality constraints Jacobian.
-         *
-         * This method evaluates the Jacobian of the equality constraints
-         * with respect to the concatenation of (u_k, x_k).
-         * The matrix is a BLASFEO matrix type.
-         *
-         * Note: The last row of the matrix is used internally and should not
-         * be evaluated by the user.
-         *
-         * @param inputs_k Pointer to array inputs of time step k
-         * @param states_k Pointer to array states of time step k
-         * @param res Pointer to (nu+nx+1 x ng)-matrix
-         * @param k Time step
-         * @return Status code
-         */
         Index eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
         {
             if (k == K_ - 1) return 0;
@@ -348,9 +272,11 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, 0);
             blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, 0);
 
+            // computeForwardKinematicsDerivatives(_model, _data, _q, _v);
+            // _data.J;
+            // _data.dJ;
             if (k == 0)
             {
-                // wrong index
                 blasfeo_diare_wrap(nx, 1.f, res, nu, nq);
             }
             return 0;
@@ -370,16 +296,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
              * dh/duk = 0
              */
         }
-
-        /**
-         * This method evaluates b_k = -x_{k+1} + f_k(u_k, x_k, p_k, p).
-         *
-         * @param states_kp1 Pointer to array states of time step k+1
-         * @param inputs_k Pointer to array inputs of time step k
-         * @param states_k Pointer to array states of time step k
-         * @param res Pointer to array nx_{k+1}-vector
-         */
-
         Index eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                      Scalar *res, const Index k)
         {
@@ -392,19 +308,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             }
             return 0;
         }
-
-        /**
-         * @brief Evaluate the equality constraint violation.
-         *
-         * This method evaluates g_k = g_k(u_k, x_k, p_k, p).
-         *
-         * @param inputs_k Pointer to array inputs of time step k
-         * @param states_k Pointer to array states of time step k
-         * @param res Pointer to array ng-vector
-         * @param k Time step
-         * @return Status code
-         */
-
         Index eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
         {
             const int thread_id = omp_get_thread_num();
@@ -439,20 +342,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         Index eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
                       Scalar *res, const Index k)
         {
-            /**
-            * @brief Evaluate the gradient of the objective function.
-            *
-            * This method evaluates the gradient of the objective function (not the Lagrangian!)
-            * with respect to the concatenation of (u_k, x_k).
-            *
-            * @param objective_scale Pointer to objective scale
-            * @param inputs_k Pointer to array inputs of time step k
-            * @param states_k Pointer to array states of time step k
-            * @param res Pointer to (nu+nx)-array
-            * @param k Time step
-            * @return Status code
-            */
-            // blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
             const Scalar s = objective_scale[0];
             if (k == K_ - 1)
             {
