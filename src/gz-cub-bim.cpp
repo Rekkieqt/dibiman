@@ -221,7 +221,6 @@ int main(int argc, char **argv)
 
     /* __________________________________________ Force Sensor Right __________________________________________  */
 
-    /* 
     Property r_ft_options;
 
     r_ft_options.put("device", "multipleanalogsensorsclient");
@@ -257,11 +256,9 @@ int main(int argc, char **argv)
         r_ft->getSixAxisForceTorqueSensorMeasure(i, wrench, timestamp);
         std::cout << wrench_vec.transpose() << std::endl;
     }
-    */
 
     /* __________________________________________ Force Sensor Left __________________________________________  */
 
-    /*
     Property l_ft_options;
 
     l_ft_options.put("device", "multipleanalogsensorsclient");
@@ -297,7 +294,6 @@ int main(int argc, char **argv)
         l_ft->getSixAxisForceTorqueSensorMeasure(i, wrench, timestamp);
         std::cout << wrench_vec.transpose() << std::endl;
     }
-    */
 
     /* __________________________________________ ARM CONTROL START __________________________________________  */
 
@@ -547,25 +543,8 @@ int main(int argc, char **argv)
         ok = left_torqueControl->setRefTorques(n_dim, joint_idx_arr, u_l);
         if (!ok) return 1;
 
-        // static double timestamp;
-        // static const size_t ft_dim = 6;
-
-        // static yarp::sig::Vector r_wrench(ft_dim);
-        // static Eigen::Map<Eigen::VectorXd> r_wrench_vec(r_wrench.data(), ft_dim);
-
-        // static yarp::sig::Vector l_wrench(ft_dim);
-        // static Eigen::Map<Eigen::VectorXd> l_wrench_vec(l_wrench.data(), ft_dim);
-
-        // r_ft->getSixAxisForceTorqueSensorMeasure(0, r_wrench, timestamp);
-        // l_ft->getSixAxisForceTorqueSensorMeasure(0, l_wrench, timestamp);
-
-        // std::cout << "Right x: " << right_params.x0.transpose() << "\n";
-        // std::cout << "Right Wrench: " << r_wrench_vec.transpose() << "\n";
-        // std::cout << "Right Torque: " << u_star.at(ids[0]) << "\n\n";
-
-        // std::cout << "Left x: " << left_params.x0.transpose() << "\n";
-        // std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
-        // std::cout << "Left Torque: " << u_star.at(ids[1]) << "\n\n";
+        static double timestamp;
+        const size_t ft_dim = 6;
 
         Time::delay(0.01);
 
@@ -590,6 +569,18 @@ int main(int argc, char **argv)
         if (i%10 == 0) {
             std::cout << "left error: " << err_r_norm << "\n\n";
             std::cout << "right error: " << err_l_norm << "\n\n";
+
+            yarp::sig::Vector r_wrench(ft_dim);
+            Eigen::Map<Eigen::VectorXd> r_wrench_vec(r_wrench.data(), ft_dim);
+
+            yarp::sig::Vector l_wrench(ft_dim);
+            Eigen::Map<Eigen::VectorXd> l_wrench_vec(l_wrench.data(), ft_dim);
+
+            r_ft->getSixAxisForceTorqueSensorMeasure(0, r_wrench, timestamp);
+            l_ft->getSixAxisForceTorqueSensorMeasure(0, l_wrench, timestamp);
+
+            std::cout << "Right Wrench: " << r_wrench_vec.transpose() << "\n";
+            std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
         }
 
         bool err_test = (err_r_norm < eps) && (err_l_norm < eps);

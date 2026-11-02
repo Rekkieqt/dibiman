@@ -21,14 +21,14 @@ BINARY_PATH="$PWD/../build/gz-cub-bim"
 
 # Start servers
 export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:~/dibiman/gazebo
-yarpserver --write --silent >/dev/null 2>&1 &
+yarpserver --write --silent &
 YARPSERVER_PID=$!
 
 if [[ $1 ]]; then
-  gz sim $GAZEBO_WORLD_PATH >/dev/null 2>&1 &
+  gz sim $GAZEBO_WORLD_PATH &
   GZSERVER_PID=$!
 else 
-  gz sim -s $GAZEBO_WORLD_PATH >/dev/null 2>&1 &
+  gz sim -s $GAZEBO_WORLD_PATH &
   GZSERVER_PID=$!
 fi
 
