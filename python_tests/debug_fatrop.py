@@ -1,3 +1,4 @@
+# Source https://github.com/jgillis/fatrop_demo
 import casadi as ca
 import pylab as plt
 
