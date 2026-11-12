@@ -51,7 +51,8 @@ using namespace yarp::os;
 using namespace yarp::dev;
 using namespace pinocchio;
 
-void worldControl(uint64_t _steps, const std::string & _world_name, bool _paused=true)
+void 
+worldControl(uint64_t _steps, const std::string & _world_name, bool _paused=true)
 {
     using namespace gz;
     msgs::WorldControl req;  
@@ -67,7 +68,8 @@ void worldControl(uint64_t _steps, const std::string & _world_name, bool _paused
         std::cerr << "Failed to send request!\n";
 }
 
-int main(int argc, char **argv)
+int 
+main(int argc, char **argv)
 {
     /* __________________________________________ YARP NETWORKING __________________________________________ */
 
