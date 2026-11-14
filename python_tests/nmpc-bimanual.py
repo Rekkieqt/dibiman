@@ -90,67 +90,6 @@ class armNMPC:
             prefix = arm['prefix']
             self.objIds.append(model.getFrameId(prefix + 'object'))
 
-    def objectDynamics(self, params) -> ca.Function:
-        """
-        Object in Body Newton-Euler Equations
-        """
-        model = pin.buildModelFromUrdf(params['path'], pin.JointModelFreeFlyer())
-        data = model.createData()
-        inertias = model.inertias[1]
-        R = ca.DM.eye(3) # Rotation matrix of the body to the inertial/world frame
-        I = inertias.inertia # Inertia tensor 3x3
-        m = inertias.mass # Object Mass
-        massMat = ca.horzcat(m * ca.DM.eye(3), ca.DM.zeros((3, 3)))
-        inertMat = ca.horzcat(ca.DM.zeros((3, 3)), I)
-        M = ca.vertcat(massMat, inertMat)
-
-        # Hand Wrenches
-        f1 = ca.SX.sym('wrench1', 6)
-        f2 = ca.SX.sym('wrench2', 6)
-        # Rotate the hand frames to have 'z' inward
-        # H_r_con_world = self.handToContactSE3(self.models[0], self.datas[0], self.handIds[0], np.zeros((3, )))
-        # H_l_con_world = self.handToContactSE3(self.models[1], self.datas[1], self.handIds[1], np.array([-np.pi/2, 0, 0]))
-
-        # Rotate the object frames such that they have a 'z' inward p. 239 "Intro to Robotic Manipulation 1994"
-        p_r = self.datas[0].oMf[self.handIds[0]].translation
-        p_l = self.datas[1].oMf[self.handIds[1]].translation
-        H_r_con_world, H_l_con_world = self.contactWorldSE3(p_r, p_l)
-
-        H_r_con_to_obj = self.contactToObjectSE3(self.models[0], self.datas[0], self.objIds[0], H_r_con_world)
-        H_l_con_to_obj = self.contactToObjectSE3(self.models[1], self.datas[1], self.objIds[1], H_l_con_world)
-
-        self.G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
-        fc = ca.vertcat(f1, f2)
-        hnet = self.G @ fc
-        # hnet = H_r_con_to_obj.dualAction @ f1 + H_l_con_to_obj.dualAction @ f2
-        Fg = R.T @ np.array([0, 0, -9.8])
-
-        # Body frame instantenous velocity
-        w = ca.SX.sym('omega', 3)
-        v = ca.SX.sym('v', 3)
-
-        # Cross products
-        dv = - m * ca.cross(w, v) + Fg
-        dw = - ca.cross(w, I @ w)
-        
-        # Combined body velocity vector
-        dV = ca.vertcat(dv, dw)
-        dV = ca.inv(M) @ (dV + hnet)
-        twist = ca.vertcat(v, w)
-
-        return ca.Function('ObjDynEq', [twist, f1, f2], [dV], ['vel', 'f1', 'f2'], ['acc'])
-
-    def softFingerGrasp(self, miu=.9, gamma=.5) -> ca.Function:
-        """
-        Coulomb Friction Cone
-        """
-        f = ca.SX.sym('force', 6)
-        eps1 = miu * f[2] - ca.sqrt(f[0]**2 + f[1]**2 + 1e-6)
-        eps2 = f[2]
-        eps3 = ca.sqrt(f[5]**2 + 1e-6) - gamma * f[2] 
-        c_coeff = ca.vertcat(eps1, eps2, eps3)
-        return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
-
     def inverseModel(self, nq):
         """
         Acceleration and Torque as inputs to the system
@@ -250,43 +189,6 @@ class armNMPC:
         x = ca.vertcat(q, v)
         # return ca.Function('J_obj', [q], [J_custom], ['q'], ['Jac'])
         return ca.Function('J_obj', [x], [dx], ['x'], ['spatial_vel'])
-
-    def objForceSolver(self, objectParams, T=1) -> None:
-        opti = ca.Opti()
-        objDynamics = self.objectDynamics(objectParams)
-        frictCone = self.softFingerGrasp()
-        twist0 = np.ones((6, ))
-
-        H = int(T/self.dt)
-
-        F1 = []
-        F2 = []
-        twistV = opti.parameter(6)
-        for k in range(H):
-            F1.append(opti.variable(6))
-            F2.append(opti.variable(6))
-
-        obj = 0
-        for i in range(H):
-            obj += ca.sumsqr(F1[i])
-            obj += ca.sumsqr(F2[i])
-
-        opti.minimize(obj)
-
-        # Subject to the model/ descrete function
-        for k in range(H):
-            opti.subject_to(objDynamics(twistV, F1[k], F2[k]) == 0)
-            opti.subject_to(frictCone(F1[k]) >= 0)
-            opti.subject_to(frictCone(F2[k]) >= 0)
-
-        opti.solver('ipopt', self.solverOptions)
-        opti.set_value(twistV, np.zeros((6, )))
-        
-        solution = opti.solve()
-        F1_star = np.array(solution.value(F1[-1]))
-        F2_star = np.array(solution.value(F2[-1]))
-        
-        return F1_star, F2_star
 
     def rneaSolver(self, params) -> None:
         self.solverVariablesInit()

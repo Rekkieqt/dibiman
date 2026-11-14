@@ -59,7 +59,7 @@ target_link_libraries(${EXECUTABLE_NAME} PRIVATE
 
 # =============== Fatrop Testing Executable =====================
 if(FATROP_EXAMPLE)
-    add_subdirectory(fatrop_test)
+    add_subdirectory(snippet_tests)
 endif()
 
 # For debugging libraries
