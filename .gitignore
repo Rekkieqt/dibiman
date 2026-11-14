@@ -11,5 +11,6 @@ CMakeSettings.json
 *.txt.user
 include/nmpc_fmpc/*
 logs/*
+plots/*
 __pycache__
 

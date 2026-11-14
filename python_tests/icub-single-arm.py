@@ -1,8 +1,8 @@
 import sys
 import os
 import casadi as ca
-from utils import *
-from nmpcParArm import armNMPC
+from plot_utils import *
+from nmpc_single_arm import ManipulatorNMPC
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
@@ -24,7 +24,7 @@ def main():
             "arm": 'r_'
             }
 
-    icubCtrler = armNMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
+    icubCtrler = ManipulatorNMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
 
     """
     Control Loop

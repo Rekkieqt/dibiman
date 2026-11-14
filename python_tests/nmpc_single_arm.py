@@ -1,13 +1,13 @@
 import sys
 import os
 import casadi as ca
-from utils import *
+from plot_utils import *
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
 # print(dir(cpin)) -> prints callable functions
 
-class armNMPC:
+class ManipulatorNMPC:
     def __init__(self, armParameters, method, Ts, ocpParameters):
         # Loading the model of the arm from full body URDF
         self.model, self.data = self.getArmModel(armParameters) 

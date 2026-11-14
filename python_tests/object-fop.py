@@ -1,45 +1,67 @@
 import sys
 import os
 import casadi as ca
-from plot-utils import *
+from plot_utils import *
 import numpy as np
 from numpy.linalg import norm, solve
 import pinocchio as pin
 import pinocchio.casadi as cpin
 
 class objectFOP:
-    def __init__(self, modelPath, robotModelPath):
+    def __init__(self, objectModelPath, robotModelPath):
 
-        self.model = pin.buildModelFromUrdf(modelPath, pin.JointModelFreeFlyer())
-        self.data = self.model.createData()
+        self.objectModel = pin.buildModelFromUrdf(objectModelPath, pin.JointModelFreeFlyer())
+        self.objectData = self.objectModel.createData()
 
         self.robotModel = pin.buildModelFromUrdf(robotModelPath)
         self.robotData = self.robotModel.createData()
 
-        q = pin.neutral(self.robotModel)
-        pin.forwardKinematics(self.robotModel, self.robotData, q)
-        pin.updateFramePlacements(self.robotModel, self.robotData)
+        self.addObjectFrameToModel()
 
         ''' Given icub world/root reference frame, object being in front '''
         # Rc_right = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
-        left_c1_R = pin.rpy.rpyToMatrix(np.array([0, -np.pi/2, -np.pi/2]))
+        self.left_c1_R = pin.rpy.rpyToMatrix(np.array([0, -np.pi/2, -np.pi/2]))
         # Rc_left = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-        right_c2_R = pin.rpy.rpyToMatrix(np.array([np.pi/2, 0, 0]))
+        self.right_c2_R = pin.rpy.rpyToMatrix(np.array([np.pi/2, 0, 0]))
 
-    def objectNetForce(self) -> pin.Force:
-        model = self.model
-        data = self.data
+        self.solverOptions = {
+                'print_time': 1,
+                'expand': True,
+                # 'debug': True,
+                # 'jit': True,
+                # 'jit_options': {'flags': '-O2', 'verbose': False},
+                # 'fatrop.print_level': 0,
+                # 'fatrop.tolerance': 1e-3,
+                # 'fatrop.max_iter': 200
+                # 'structure_detection': 'auto'
+                # 'ipopt.hessian_approximation': 'limited-memory',
+                'ipopt.print_level': 1,
+                # 'ipopt.tol': 1e-3
+                }
+
+    def objectNetForce(self, f_in) -> pin.Force:
+        model = self.objectModel
+        data = self.objectData
+
         f_ext = [pin.Force.Zero() for _ in range(model.njoints)]
+        f_ext[1] = pin.Force(f_in)
+
         q = pin.neutral(model)
         v = np.zeros((model.nv, ))
         a = np.zeros((model.nv, ))
+        tau = np.zeros((model.nv, ))
+
         pin.rnea(model, data, q, v, a, f_ext)
-        return data.of
+
+        return data.f[1]
 
     def objectDynamics(self) -> ca.Function:
         """
         Object in Body Newton-Euler Equations
         """
+        model = self.objectModel
+        data = self.objectData
+
         inertias = model.inertias[1]
         R = ca.DM.eye(3) # Rotation matrix of the body to the inertial/world frame
         I = inertias.inertia # Inertia tensor 3x3
@@ -61,21 +83,21 @@ class objectFOP:
 
         r_hand_id = robotM.getFrameId('r_hand_dh_frame')
         l_hand_id = robotM.getFrameId('l_hand_dh_frame')
-        l_obj_id = robotD.getFrameId('l_object')
+        l_obj_id = robotM.getFrameId('l_object')
 
-        p_r = self.robotModel.oMf[r_hand_id].translation
-        p_l = self.robotModel.oMf[l_hand_id].translation
+        p_r = robotD.oMf[r_hand_id].translation
+        p_l = robotD.oMf[l_hand_id].translation
 
-        H_r_con_world = pin.SE3(right_c2_R, p_r)
-        H_l_con_world = pin.SE3(right_c1_R, p_l)
+        H_r_con_world = pin.SE3(self.right_c2_R, p_r)
+        H_l_con_world = pin.SE3(self.left_c1_R, p_l)
 
-        H_r_con_to_obj = robotD.oMf[l_obj_id].inverse * H_r_con_world
-        H_l_con_to_obj = robotD.oMf[l_obj_id].inverse * H_l_con_world
+        H_r_con_to_obj = robotD.oMf[l_obj_id].inverse() * H_r_con_world
+        H_l_con_to_obj = robotD.oMf[l_obj_id].inverse() * H_l_con_world
 
-        self.G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
+        G = ca.horzcat(H_r_con_to_obj.dualAction, H_l_con_to_obj.dualAction)
 
         fc = ca.vertcat(f1, f2)
-        hnet = self.G @ fc
+        hnet = G @ fc
         # hnet = H_r_con_to_obj.dualAction @ f1 + H_l_con_to_obj.dualAction @ f2
         Fg = R.T @ np.array([0, 0, -9.8])
 
@@ -105,9 +127,9 @@ class objectFOP:
         c_coeff = ca.vertcat(eps1, eps2, eps3)
         return ca.Function('Coulomb_Coeff', [f], [c_coeff], ['f'], ['c_coeff'])
 
-    def objForceSolver(self, objectParams, T=1):
+    def objForceSolver(self, T=1):
         opti = ca.Opti()
-        objDynamics = self.objectDynamics(objectParams)
+        objDynamics = self.objectDynamics()
         frictCone = self.softFingerGrasp()
         twist0 = np.ones((6, ))
 
@@ -142,11 +164,6 @@ class objectFOP:
         
         return F1_star, F2_star
 
-    def contactToObjectSE3(self, objectFrameId, H_con_world):
-        ''' Relative between hand and object '''
-        H_con_to_obj = data.oMf[objectFrameId].inverse() * H_con_world
-        return H_con_to_obj
-
     def addObjectFrameToModel(self) -> None:
         model = self.robotModel
         data = self.robotData
@@ -157,32 +174,51 @@ class objectFOP:
 
         left_hand_id = model.getFrameId('l_hand_dh_frame')
         right_hand_id = model.getFrameId('r_hand_dh_frame')
+
         obj_p = .5 * (data.oMf[left_hand_id].translation + data.oMf[right_hand_id].translation)
         obj_R = np.eye(3)
         obj_H = pin.SE3(obj_R, obj_p)
-        # 'wrist_yaw'
+        # # 'wrist_yaw'
 
         left_hand_joint_id = model.getJointId('l_wrist_yaw')
-        left_hand_joint_to_obj_H = data.oMi[left_hand_id].inverse() * obj_H
+        left_hand_joint_to_obj_H = data.oMi[left_hand_joint_id].inverse() * obj_H
         left_hand_joint_to_obj_frame = pin.Frame('l_object',
-                                        model.frames[left_hand_joint_id].parentJoint,
                                         left_hand_joint_id,
+                                        left_hand_id,
                                         left_hand_joint_to_obj_H,
                                         pin.FrameType.OP_FRAME
                                         )
 
-        model.addFrame(left_hand_to_obj_frame)
-        self.robotData = model.createData()
+        model.addFrame(left_hand_joint_to_obj_frame)
+        data = model.createData()
 
         pin.forwardKinematics(model, data, q)
         pin.updateFramePlacements(model, data)
+
+        self.robotData = data
 
 
 def main():
     objectPath = os.getcwd() + '/../conf/testBox.urdf'
     icubPath = os.getcwd() + '/../conf/model.urdf'
 
-    fop_test = objectFOP(icubPath, objectPath)
+    fop_test = objectFOP(objectPath, icubPath)
+    fnet = fop_test.objectNetForce(np.array([5, 2, 0, 0, 0, 0]))
+
+    print(f"Net Obj Force Spatial {fnet}")
+
+    try:
+        wrench_r, wrench_l = fop_test.objForceSolver() 
+    except Exception as e:
+        raise
+
+    print(f'right wrench :{wrench_r}')
+    print(f'left wrench :{wrench_l}')
+    fc = np.hstack((wrench_r, wrench_l))
+    print(np.hstack((wrench_r, wrench_l)).shape)
+
+
 
 if __name__ == "__main__":
+    np.set_printoptions(precision=3, suppress=True)
     main()

@@ -1,8 +1,8 @@
 import sys
 import os
 import casadi as ca
-from utils import *
-from nmpcArm import armNMPC
+from plot_utils import *
+from nmpc_single_arm import ManipulatorNMPC
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
@@ -24,25 +24,25 @@ def main():
             "arm": 'l_'
             }
 
-    icubCtrler = armNMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
+    icubCtrler = ManipulatorNMPC(armParameters=armParams, method='inverse', Ts=dt, ocpParameters=ocpParams)
 
     """
     Control Loop
     """
     model, data = icubCtrler.pinModelandData()
     """ Print Arm Model Data """
-    # with open('leftArmData.txt', 'w+') as f:
-    #     # Joints with their names
-    #     f.write("JOINTS:\n")
-    #     for i in range(model.njoints):
-    #         f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
-    #     
-    #     # Frames with details
-    #     f.write("\nFRAMES:\n")
-    #     for i in range(model.nframes):
-    #         frame = model.frames[i]
-    #         f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
-    # f.close()
+    with open('leftArmData.txt', 'w+') as f:
+        # Joints with their names
+        f.write("JOINTS:\n")
+        for i in range(model.njoints):
+            f.write(f"  {i}: {model.names[i]} ({model.joints[i].shortname()})\n")
+        
+        # Frames with details
+        f.write("\nFRAMES:\n")
+        for i in range(model.nframes):
+            frame = model.frames[i]
+            f.write(f"  {i}: {frame.name} (type={frame.type}, parentJoint={frame.parentJoint})\n")
+    f.close()
     cmodel = cpin.Model(model)
     cdata = cmodel.createData()
 

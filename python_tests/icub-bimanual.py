@@ -3,8 +3,8 @@ import os
 import casadi as ca
 import copy
 from scipy.io import savemat
-from utils import *
-from nmpcReArmed import armNMPC
+from plot_utils import *
+from nmpc_bimanual import BimanualNMPC
 import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
@@ -38,7 +38,7 @@ def main():
             "path": os.getcwd() + '/../conf/testBox.urdf',
             }
 
-    iBee = armNMPC(armParameters=armParams, Ts=dt, ocpParameters=ocpParams, objectParameters=objParams)
+    iBee = BimanualNMPC(armParameters=armParams, Ts=dt, ocpParameters=ocpParams, objectParameters=objParams)
     nq = iBee.models[0].nq
     nv = iBee.models[0].nv
 
@@ -173,18 +173,6 @@ def main():
 
     twist_r[0] = np.zeros((6, ))
     twist_l[0] = np.zeros((6, ))
-
-    try:
-        wrench_r, wrench_l = iBee.objForceSolver(objParams) 
-    except Exception as e:
-        raise
-
-    print(f'right wrench :{wrench_r}')
-    print(f'left wrench :{wrench_l}')
-    fc = np.hstack((wrench_r, wrench_l))
-    print(np.hstack((wrench_r, wrench_l)).shape)
-    print(iBee.G @ fc)
-    sys.exit()
 
     for i in range(N):
         # Solve OCP
