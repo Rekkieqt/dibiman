@@ -97,7 +97,7 @@ namespace dibiman {
     {  
         using namespace pinocchio;
 
-        Model model;  
+        Model model;
         pinocchio::urdf::buildModel(modelpath, model);  
 
         std::vector<JointIndex> list_joints_to_use_id;
