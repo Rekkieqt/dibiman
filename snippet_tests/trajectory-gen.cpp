@@ -68,6 +68,7 @@ main(int argc, char *argv[])
 
     std::cout << Xs << std::endl;
     std::cout << Vs << std::endl;
+    std::cout << Vs.toVector()[1] << std::endl;
 
 }
 

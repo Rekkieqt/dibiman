@@ -10,38 +10,86 @@
 #include "pinocchio/eigen-common.hpp"
 #include "pinocchio/algorithm/model.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
+#include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/parallel/rnea.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
-#include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
+// #include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
 
 // #include "pinocchio/algorithm/jacobian.hpp"
 // #include "pinocchio/algorithm/joint-configuration.hpp"
 // #include "pinocchio/algorithm/kinematics.hpp"
-#include "pinocchio/algorithm/kinematics-derivatives.hpp"
-// #include "pinocchio/algorithm/frames.hpp"
-// #include "pinocchio/algorithm/frames-derivatives.hpp"
+#include "pinocchio/spatial.hpp"
+#include "pinocchio/algorithm/frames.hpp"
+#include "pinocchio/algorithm/frames-derivatives.hpp"
+
+/* Some evaluations are parallelized with OpenMP, as such the access to shared data must be explicitly
+ * managed, for large objects explicit arrays are reserved to avoid multiple accesses, for small values 
+ * quick getter functions are implemented 
+ */
 
 using namespace fatrop;
 using namespace Eigen;
 
-
-/**
- * This is an example on how to use a specialization for the OcpAbstractTpl class, rather than using
- * the dynamic polymorphism by using the OcpAbstractDynamic tag. Using static polymorphism reduces
- * the overhead and enables compiler optimizations for the NlpOcpTpl class.
- *
- */
-
 class RobotModel
 {
+    public:
+        const Scalar dt_ = 0.05;
+
+        Matrix3d Ri = Matrix3d::Identity();
+        Vector3d pi = Vector3d(0, 0, 0);
+        pinocchio::SE3 Xi{Ri, pi};
+
+        Matrix3d Rf = pinocchio::rpy::rpyToMatrix(Vector3d(M_PI/2.0, 0, 0));
+        Vector3d pf = Vector3d(1, 1, 1);
+        pinocchio::SE3 Xf{Rf, pf};
+
     protected:
+        int nx;
+        int nu;
+        int nq;
+        int nv;
+
+        const int vel_size = 6;
+
+        const double a5 = 6;
+        const double a4 = -15;
+        const double a3 = 10;
+
+        const double Tf = 10;
+
+        pinocchio::FrameIndex _ee_frame_id;
+
         pinocchio::Model _model;
         pinocchio::Data _data;
         std::unique_ptr<pinocchio::ModelPool> _pool;
 
-        int nx;
-        int nu;
-        int nq;
+
+        const double _Qx_k = 1;
+        const double _Qv_k = 1;
+
+        const double _Qa_k = 1;
+        const double _Qu_k = 1;
+
+        const double _Qx_N = 10;
+        const double _Qv_N = 10;
+
+        struct _frame_velocity_derivatives {
+            MatrixXd dq;
+            MatrixXd dv;
+
+            _frame_velocity_derivatives() = default;
+
+            _frame_velocity_derivatives(const int & vel_size, const int & nv) :
+                dq(vel_size, nv),
+                dv(vel_size, nv)
+            {}
+
+            void setZero(void)
+            {
+                dq.setZero();
+                dv.setZero();
+            }
+        };
 
         struct _rnea_second_order_matrices {
             Tensor<double, 2> _qq;
@@ -68,40 +116,55 @@ class RobotModel
         };
 
         std::vector<_rnea_second_order_matrices> _mat_pool;
-
-        // cost matrices
-        const double _Qq_k = 1;
-        const double _Qv_k = 1;
-
-        const double _Qa_k = 1;
-        const double _Qtau_k = 1;
-
-        const double _Qq_N = 10;
-        const double _Qv_N = 10;
-
-        inline int get_nx_size(void) const { return nx; }
-        inline int get_nu_size(void) const { return nu; }
-        inline int get_nq_size(void) const { return nq; }
-
-        inline int get_xk_cost(void) const { return _Qq_k; }
-        inline int get_uk_cost(void) const { return _Qtau_k; }
-        inline int get_xN_cost(void) const { return _Qtau_k; }
+        std::vector<_frame_velocity_derivatives> _vel_partial_pool;
+        std::vector<pinocchio::Motion> _vel_pool;
 
         void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use, const int & n_threads) {
             _model = dibiman::getArmModel(modelpath, list_joints_to_use);
             _data = pinocchio::Data(_model);
             _pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
-            nq = _model.nv;
+            nq = _model.nq;
+            nv = _model.nv;
             nx = nq * 2;
             nu = nq * 2;
             _mat_pool.reserve(n_threads);
+            _ee_frame_id = _model.getFrameId("r_hand_dh_frame");
             for (int i = 0; i < n_threads; ++i)
             {
-                _rnea_second_order_matrices temp(nq);
-                _mat_pool.push_back(temp);
+                _rnea_second_order_matrices temp_rnea_der(nq);
+                _mat_pool.push_back(temp_rnea_der);
+
+                _frame_velocity_derivatives temp_vel_der(vel_size, nv);
+                _vel_partial_pool.push_back(temp_vel_der);
+                _vel_pool.emplace_back();
                 //_mat_pool.emplace(i, nq);
             }
-        };
+        }
+
+        inline double get_s(const double & t, const double & Tf)
+        {
+
+            double x = t / Tf;
+            double x3 = x * x * x;
+            return a3 * x3 + a4 * x3 * x + a5 * x3 * x * x;
+        }
+
+        inline double get_ds(const double & t, const double & Tf)
+        {
+            double x = t / Tf;
+            double x2 = x * x;
+            double res = 3 * a3 * x2 + 4 * a4 * x2 * x + 5 * a5 * x2 * x2;
+            return res * (1.0)/Tf;
+        }
+
+        inline pinocchio::Motion twist_ref(const fatrop::Index k)
+        {
+            double s = get_s(k * dt_, Tf);
+            double ds = get_ds(k * dt_, Tf);
+            pinocchio::Motion nu = pinocchio::log6(Xi.actInv(Xf));
+            pinocchio::SE3 Xs = Xi * pinocchio::exp6(nu * s);
+            return Xs.act(nu) * ds;
+        }
 
 };
 
@@ -141,7 +204,7 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             if (k == 0)
             {
-                return nx + nq;
+                return vel_size + nx + nq;
             }
             else if (k == K_ - 1)
             {
@@ -149,7 +212,7 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             }
             else
             {
-                return nq;
+                return nq + vel_size;
             }
         };
 
@@ -177,15 +240,15 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
             const Scalar s = objective_scale[0];
 
-            if (k == K_ - 1)          
+            if (k == K_ - 1)
             {                              
-                blasfeo_diare_wrap(nx, s * 2 * _Qq_N, res, 0, 0);
+                blasfeo_diare_wrap(nx, s * 2 * _Qx_N, res, 0, 0);
                 // return 0;
             }                              
-            else                           
+            else
             {                              
-                blasfeo_diare_wrap(nu, s * 2 * _Qtau_k, res, 0, 0);
-                blasfeo_diare_wrap(nx, s * 2 * _Qq_k, res, nu, nu);
+                blasfeo_diare_wrap(nu, s * 2 * _Qu_k, res, 0, 0);
+                blasfeo_diare_wrap(nx, s * 2 * _Qx_k, res, nu, nu);
             }
             /*
             const int thread_id = omp_get_thread_num();
@@ -194,8 +257,8 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             _rnea_second_order_matrices & _m = _mat_pool[(size_t)thread_id];
             _m.setZero();
 
-            _m._qq.diagonal().array() += 2 * _Qq_k;
-            _m._vv.diagonal().array() += 2 * _Qq_k;
+            _m._qq.diagonal().array() += 2 * _Qx_k;
+            _m._vv.diagonal().array() += 2 * _Qx_k;
 
             // Put RNEA and Jacobian Derivatives here
             Map<const VectorXd> _q  (states_k, nq);
@@ -217,8 +280,8 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             Map<MatrixXd> _qv_mat(_m._qv.data(), nq, nq);
             Map<MatrixXd> _aq_mat(_m._aq.data(), nq, nq);
 
-            _qq_mat.diagonal().array() += s * 2 * _Qq_k;
-            _vv_mat.diagonal().array() += s * 2 * _Qq_k;
+            _qq_mat.diagonal().array() += s * 2 * _Qx_k;
+            _vv_mat.diagonal().array() += s * 2 * _Qx_k;
 
             blasfeo_pack_dmat(nq, nq,
                     _qq_mat.data(), _qq_mat.outerStride(), 
@@ -250,12 +313,17 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             const int thread_id = omp_get_thread_num();
             const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
             pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
+            _frame_velocity_derivatives & _v_data = _vel_partial_pool[(size_t)thread_id];
+            _v_data.setZero();
 
             // Put RNEA and Jacobian Derivatives here
-            Eigen::Map<const Eigen::VectorXd> _q  (states_k,      nq);
-            Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
-            Eigen::Map<const Eigen::VectorXd> _a  (inputs_k,      nq);
-            computeRNEADerivatives(_model, _data, _q, _v, _a);
+            Map<const VectorXd> _q  (states_k, nq);
+            Map<const VectorXd> _v  (states_k + nq, nq);
+            Map<const VectorXd> _a  (inputs_k, nq);
+
+            pinocchio::computeRNEADerivatives(_model, _data, _q, _v, _a);
+
+            pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_id, pinocchio::WORLD, _v_data.dq, _v_data.dv);
 
             /// \note The results are stored in data.dtau_dq, data.dtau_dv and data.M which respectively
             /// correspond
@@ -272,12 +340,15 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, 0);
             blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, 0);
 
+            blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, nx, nq);
+            blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nx + nv, nq);
+
             // computeForwardKinematicsDerivatives(_model, _data, _q, _v);
             // _data.J;
             // _data.dJ;
             if (k == 0)
             {
-                blasfeo_diare_wrap(nx, 1.f, res, nu, nq);
+                blasfeo_diare_wrap(nx, 1.f, res, nu, nq + vel_size);
             }
             return 0;
             /* RNEA constraint
@@ -313,18 +384,26 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             const int thread_id = omp_get_thread_num();
             const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
             pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
+            pinocchio::Motion & _s_vel = _vel_pool[(size_t)thread_id];
 
             if (k == K_ - 1) { return 0; }
             else
             {
-                Eigen::Map<const Eigen::VectorXd> _q  (states_k, nq);
-                Eigen::Map<const Eigen::VectorXd> _v  (states_k + nq, nq);
-                Eigen::Map<const Eigen::VectorXd> _a  (inputs_k, nq);
+                Map<const VectorXd> _q  (states_k, nq);
+                Map<const VectorXd> _v  (states_k + nq, nq);
+                Map<const VectorXd> _a  (inputs_k, nq);
 
                 pinocchio::rnea(_model, _data, _q, _v, _a);
+                // updateFramePlacements(_model, _data);
+                _s_vel = getFrameVelocity(_model, _data, _ee_frame_id, pinocchio::WORLD);
+
                 for (int i = 0; i < nq; ++i)
                 {
                     res[i] = _data.tau[i] - inputs_k[nq + i];
+                }
+                for (int i = 0; i < vel_size; ++i)
+                {
+                    res[nq + i] = _s_vel.toVector()[i]; // - _vel_ref[i]; // vel_ref uncreated yet
                 }
             }
 
@@ -333,8 +412,8 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                 for (int i = 0; i < nq; ++i)
                 {
                     // initial state is 0
-                    res[nq + i] = states_k[i]; // - ...
-                    res[nx + i] = states_k[i + nq]; // - ...
+                    res[vel_size + nq + i] = states_k[i]; // - ... q0
+                    res[vel_size + nx + i] = states_k[i + nq]; // - ... v0
                 }
             }
             return 0;
@@ -343,19 +422,20 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                       Scalar *res, const Index k)
         {
             const Scalar s = objective_scale[0];
+
             if (k == K_ - 1)
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    res[i] = 2 * _Qq_N * states_k[i] * s;
+                    res[i] = 2 * _Qx_N * states_k[i] * s;
                 }
             }
             else
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    res[i] = 2 * _Qtau_k * inputs_k[i] * s;
-                    res[nx + i] = 2 * _Qq_k * states_k[i] * s;
+                    res[i] = 2 * _Qu_k * inputs_k[i] * s;
+                    res[nx + i] = 2 * _Qx_k * states_k[i] * s;
                 }
             }
             return 0;
@@ -365,19 +445,21 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             *res = 0.0;
             const Scalar s = objective_scale[0];
+
             if (k == K_ - 1)
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= _Qq_N * states_k[i] * states_k[i] * s;
+                    *res+= _Qx_N * states_k[i] * states_k[i] * s;
                 }
             }
             else
             {
                 for (int i = 0; i < nx; ++i)
                 {
-                    *res+= _Qtau_k * inputs_k[i] * inputs_k[i] * s + _Qq_k * states_k[i] * states_k[i] * s;
+                    *res+= _Qu_k * inputs_k[i] * inputs_k[i] + _Qx_k * states_k[i] * states_k[i];
                 }
+                *res*= s;
 
             }
             return 0;
@@ -414,7 +496,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
 
     private:
         const Index K_ = 50;
-        const Scalar dt_ = 0.05;
 };
 
 int main()
