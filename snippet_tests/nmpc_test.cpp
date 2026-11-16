@@ -74,8 +74,8 @@ class RobotModel
         const double _Qv_N = 10;
 
         struct _frame_velocity_derivatives {
-            MatrixXd dq;
-            MatrixXd dv;
+            pinocchio::Data::Matrix6x dq;
+            pinocchio::Data::Matrix6x dv;
 
             _frame_velocity_derivatives() = default;
 
@@ -131,13 +131,9 @@ class RobotModel
             _ee_frame_id = _model.getFrameId("r_hand_dh_frame");
             for (int i = 0; i < n_threads; ++i)
             {
-                _rnea_second_order_matrices temp_rnea_der(nq);
-                _mat_pool.push_back(temp_rnea_der);
-
-                _frame_velocity_derivatives temp_vel_der(vel_size, nv);
-                _vel_partial_pool.push_back(temp_vel_der);
+                _mat_pool.emplace_back(nq);
+                _vel_partial_pool.emplace_back(vel_size, nv);
                 _vel_pool.emplace_back();
-                //_mat_pool.emplace(i, nq);
             }
         }
 
@@ -310,6 +306,22 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
         {
             if (k == K_ - 1) return 0;
 
+            /* RNEA constraint
+             * h(q, v, a, tau) = rnea(q, v, a) - tau = 0
+             * dh/da, dh/dtau, dh/dq, dh/dv = dh/d(uk, xk)
+             * dh/dtau = I_nq 
+             * Ggt = [data.M, I, data.dtau_dq, data.dtau_dv]
+             * 
+             *
+             * Jacobian constraint
+             * h(q, v, a, tau) = J(q) * v - (numerical v_des)
+             * dh/da, dh/dtau, dh/dq, dh/da = dh/d(uk, xk)
+             * [0, 0, dh/dq, J(q)] = dh/d(uk, xk)
+             * dh/da = 0
+             * dh/dtau = 0
+             * dh/duk = 0
+             */
+
             const int thread_id = omp_get_thread_num();
             const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
             pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
@@ -351,21 +363,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                 blasfeo_diare_wrap(nx, 1.f, res, nu, nq + vel_size);
             }
             return 0;
-            /* RNEA constraint
-             * h(q, v, a, tau) = rnea(q, v, a) - tau = 0
-             * dh/da, dh/dtau, dh/dq, dh/dv = dh/d(uk, xk)
-             * dh/dtau = I_nq 
-             * Ggt = [data.M, I, data.dtau_dq, data.dtau_dv]
-             * 
-             *
-             * Jacobian constraint
-             * h(q, v, a, tau) = J(q) * v - (numerical v_des)
-             * dh/da, dh/dtau, dh/dq, dh/da = dh/d(uk, xk)
-             * [0, 0, dh/dq, J(q)] = dh/d(uk, xk)
-             * dh/da = 0
-             * dh/dtau = 0
-             * dh/duk = 0
-             */
         }
         Index eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                      Scalar *res, const Index k)

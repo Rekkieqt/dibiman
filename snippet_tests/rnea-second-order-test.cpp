@@ -8,6 +8,7 @@
 #include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
 #include "pinocchio/multibody/sample-models.hpp"
+#include "dibiman/utils/robot.hpp"
 
 
 int
