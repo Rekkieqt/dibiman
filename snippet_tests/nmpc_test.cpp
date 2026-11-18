@@ -22,11 +22,6 @@
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/frames-derivatives.hpp"
 
-/* Some evaluations are parallelized with OpenMP, as such the access to shared data must be explicitly
- * managed, for large objects explicit arrays are reserved to avoid multiple accesses, for small values 
- * quick getter functions are implemented 
- */
-
 using namespace fatrop;
 using namespace Eigen;
 
@@ -34,6 +29,7 @@ class RobotModel
 {
     public:
         const Scalar dt_ = 0.05;
+        const fatrop::Index K_ = 50;
 
         Matrix3d Ri = Matrix3d::Identity();
         Vector3d pi = Vector3d(0, 0, 0);
@@ -490,9 +486,6 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
             // uk[1] = 0.;
             return 0;
         };
-
-    private:
-        const Index K_ = 50;
 };
 
 int main()
