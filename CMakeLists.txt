@@ -56,20 +56,6 @@ add_subdirectory(src)
 
 add_library(dibiman::dibiman ALIAS dibiman)
 
-# target_link_libraries(dibiman
-#   PUBLIC
-#     Eigen3::Eigen
-#     pinocchio::pinocchio
-#     fatrop::fatrop
-#     OpenMP::OpenMP_CXX
-# )
-
-# compiler warnings
-# target_compile_options(dibiman PRIVATE
-#   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-#   $<$<CXX_COMPILER_ID:MSVC>:/W4>
-# )
-
 # ----------------------------------------------------------------------
 # Gazebo Simulations
 # ----------------------------------------------------------------------

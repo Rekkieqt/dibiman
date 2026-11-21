@@ -273,24 +273,6 @@ main(int argc, char **argv)
     pinocchio::forwardKinematics(right_model, right_data, q_r_vec);
     pinocchio::updateFramePlacements(right_model, right_data);
 
-    /* Left Arm */
-    int left_num_jnts;
-    left_encoders->getAxes(&left_num_jnts);
-
-    double* q_l_arr = new double[left_num_jnts]; /* joint positions */
-    Eigen::Map<Eigen::VectorXd> q_l_vec(q_l_arr, left_model.nv);
-    q_l_vec.setZero();
-
-    double* v_l_arr = new double[left_num_jnts]; /* joint velocities */
-    Eigen::Map<Eigen::VectorXd> v_l_vec(v_l_arr, left_model.nv);
-    v_l_vec.setZero();
-
-    left_encoders->getEncoders(q_l_arr);
-    q_l_vec *= degToPi;
-
-    pinocchio::forwardKinematics(left_model, left_data, q_l_vec);
-    pinocchio::updateFramePlacements(left_model, left_data);
-
     /* ______________ Setting Up reference Frames ______________ */
 
     const Eigen::VectorXd right_arm_pos = right_data.oMf[right_hand_id].translation();
@@ -300,8 +282,6 @@ main(int argc, char **argv)
     pinocchio::SE3 object_frame(Eigen::Matrix3d::Identity(), object_pos);
 
     std::map<std::string, Eigen::VectorXd> jointData;
-    jointData[ids[0]] = q_r_vec;
-    jointData[ids[1]] = q_l_vec;
     manip_controller.setObjectFrame(object_frame, jointData);
 
     pinocchio::SE3 & right_hand_frame = right_data.oMf[right_hand_id];
@@ -360,22 +340,6 @@ main(int argc, char **argv)
     Eigen::VectorXd u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
     std::cout << "u r ref : " << u_r_ref_vec.transpose() << std::endl;
 
-    Eigen::VectorXd q_l_ref_vec = dibiman::inverseKinematics(
-            left_model,
-            left_data,
-            q_l_vec,
-            l_H_ref,
-            left_hand_id,
-            "full"
-            );
-
-    std::cout << "q l ref : " << q_l_ref_vec.transpose() << std::endl;
-    Eigen::VectorXd v_l_ref_vec(n_dim);
-    v_l_ref_vec.setZero();
-
-    Eigen::VectorXd u_l_ref_vec = pinocchio::rnea(left_model, left_data, q_l_ref_vec, v_l_ref_vec, v_l_ref_vec);
-    std::cout << "u l ref: " << u_l_ref_vec.transpose() << std::endl;
-
     /* ______________ Inverse Kinematics - closure ______________ */
 
     Eigen::VectorXd q_r_ref_vec_2 = dibiman::inverseKinematics(
@@ -389,16 +353,6 @@ main(int argc, char **argv)
 
     Eigen::VectorXd u_r_ref_vec_2 = pinocchio::rnea(right_model, right_data, q_r_ref_vec_2, v_r_ref_vec, v_r_ref_vec);
 
-    Eigen::VectorXd q_l_ref_vec_2 = dibiman::inverseKinematics(
-            left_model,
-            left_data,
-            q_l_vec,
-            l_H_ref_2,
-            left_hand_id,
-            "full"
-            );
-
-    Eigen::VectorXd u_l_ref_vec_2 = pinocchio::rnea(left_model, left_data, q_l_ref_vec_2, v_l_ref_vec, v_l_ref_vec);
 
     /* ____________ Solver Structs Init _________________ */
 
@@ -414,10 +368,6 @@ main(int argc, char **argv)
     right_params.xref << q_r_ref_vec, v_r_ref_vec;
     right_params.uref << u_r_ref_vec;
 
-    left_params.x0 << q_l_vec, v_l_vec;
-    left_params.xref << q_l_ref_vec, v_l_ref_vec;
-    left_params.uref << u_l_ref_vec;
-
     std::map<std::string, casadi::DM> u_star;
     u_star[ids[0]] = casadi::DM::zeros(n_dim);
     u_star[ids[1]] = casadi::DM::zeros(n_dim);
@@ -426,7 +376,6 @@ main(int argc, char **argv)
     
     for (int i = 0; i < n_dim; i++) {
         right_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
-        left_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
     }
 
     worldControl(0, "grasp-world", false);
@@ -436,28 +385,20 @@ main(int argc, char **argv)
     constexpr double eps = 0.08;
     for (int i = 0;; i++) {
 
-        left_encoders->getEncoders(q_l_arr);
         right_encoders->getEncoders(q_r_arr);
 
-        left_encoders->getEncoderSpeeds(v_l_arr);
         right_encoders->getEncoderSpeeds(v_r_arr);
 
-        left_params.x0 << q_l_vec, v_l_vec;
-        left_params.x0 *= degToPi;
 
         right_params.x0 << q_r_vec, v_r_vec;
         right_params.x0 *= degToPi;
 
         bimanual_solve_params[ids[0]] = right_params;
-        bimanual_solve_params[ids[1]] = left_params;
 
         u_star = manip_controller.solve(bimanual_solve_params);
         double* u_r = u_star.at(ids[0]).ptr();
-        double* u_l = u_star.at(ids[1]).ptr();
 
         bool ok = right_torqueControl->setRefTorques(n_dim, joint_idx_arr, u_r);
-        if (!ok) return 1;
-        ok = left_torqueControl->setRefTorques(n_dim, joint_idx_arr, u_l);
         if (!ok) return 1;
 
         static double timestamp;
@@ -470,44 +411,27 @@ main(int argc, char **argv)
 
         // std::cout << "right pos: " << right_data.oMf[right_hand_id].translation().transpose() << "\n";
         
-        pinocchio::forwardKinematics(left_model, left_data, q_l_vec * degToPi);
-        pinocchio::updateFramePlacements(left_model, left_data);
-
-        // std::cout << "left pos: " << left_data.oMf[left_hand_id].translation().transpose() << "\n";
-
         pinocchio::Motion err_r = pinocchio::log6(r_H_ref.actInv(right_hand_frame));
         // Eigen::VectorXd err_r = r_H_ref.translation() - right_hand_frame.translation();
         double err_r_norm = err_r.toVector().norm();
 
-        pinocchio::Motion err_l = pinocchio::log6(l_H_ref.actInv(left_hand_frame));
-        // Eigen::VectorXd err_l = l_H_ref.translation() - left_hand_frame.translation();
-        double err_l_norm = err_l.toVector().norm();
-
         if (i%10 == 0) {
-            std::cout << "left error: " << err_r_norm << "\n\n";
-            std::cout << "right error: " << err_l_norm << "\n\n";
+            std::cout << "right error: " << err_r_norm << "\n\n";
 
             yarp::sig::Vector r_wrench(ft_dim);
             Eigen::Map<Eigen::VectorXd> r_wrench_vec(r_wrench.data(), ft_dim);
 
-            yarp::sig::Vector l_wrench(ft_dim);
-            Eigen::Map<Eigen::VectorXd> l_wrench_vec(l_wrench.data(), ft_dim);
-
             r_ft->getSixAxisForceTorqueSensorMeasure(0, r_wrench, timestamp);
-            l_ft->getSixAxisForceTorqueSensorMeasure(0, l_wrench, timestamp);
 
             std::cout << "Right Wrench: " << r_wrench_vec.transpose() << "\n";
-            std::cout << "Left Wrench: " << l_wrench_vec.transpose() << "\n";
         }
 
-        bool err_test = (err_r_norm < eps) && (err_l_norm < eps);
+        bool err_test = (err_r_norm < eps);
         if (err_test) {
             std::cout << "Initiating Closure" << std::endl;
             right_params.xref << q_r_ref_vec_2, v_r_ref_vec;
             right_params.uref = u_r_ref_vec_2;
 
-            left_params.xref << q_l_ref_vec_2, v_l_ref_vec;
-            left_params.uref = u_l_ref_vec_2;
         }
 
         worldControl(5, "grasp-world");
@@ -515,7 +439,6 @@ main(int argc, char **argv)
     }
 
     right_robotDevice.close();
-    left_robotDevice.close();
     
     return 0;
 }
