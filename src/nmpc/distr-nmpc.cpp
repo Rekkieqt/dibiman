@@ -3,8 +3,7 @@
 #include <memory>
 #include <omp.h>
 #include <fatrop/fatrop.hpp>
-// #include "fatrop/ocp/nlp_ocp.hxx"
-#include "nlp_ocp.hxx"
+#include "dibiman/fatrop/nlp_ocp.hxx"
 #include "dibiman/utils/robot.hpp"
 
 #include "pinocchio/eigen-common.hpp"
@@ -13,14 +12,10 @@
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/parallel/rnea.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
-// #include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
-
-// #include "pinocchio/algorithm/jacobian.hpp"
-// #include "pinocchio/algorithm/joint-configuration.hpp"
-// #include "pinocchio/algorithm/kinematics.hpp"
-#include "pinocchio/spatial.hpp"
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/frames-derivatives.hpp"
+
+#include "pinocchio/spatial.hpp"
 
 using namespace fatrop;
 using namespace Eigen;

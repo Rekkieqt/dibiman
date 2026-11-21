@@ -2,29 +2,25 @@
 
 #include <fatrop/fatrop.hpp>
 #include "dibiman/fatrop/nlp_ocp.hxx"
+#include "dibiman/fatrop/decentralized-fatrop-helper.hpp"
 #include "dibiman/utils/robot.hpp"
-
 
 namespace dibiman 
 {
-struct RobotManipulator {};
-
-typedef fatrop::OcpAbstractTpl<RobotManipulator> ManipulatorOcp;
+    struct DecentralizedManipulatorStatic {};
+    typedef fatrop::OcpAbstractTpl<DecentralizedManipulatorStatic> DecentralizedOcp;
 }
 
 namespace fatrop {
 
 template <> 
-class OcpAbstractTpl<dibiman::RobotManipulator> : public dibiman::RobotModel
+class OcpAbstractTpl<dibiman::DecentralizedManipulatorStatic> : public dibiman::DecentralizedFatropHelper
 {
-    /* x = [q, v]
-     * u = [a, tau]
-     */
     public:
         using Index = fatrop::Index;
         using Scalar = fatrop::Scalar;
 
-        OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints, const int & n_threads);
+        OcpAbstractTpl();
 
         Index get_nx(const Index k) const;
 

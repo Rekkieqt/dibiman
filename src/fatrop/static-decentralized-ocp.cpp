@@ -1,9 +1,11 @@
 #include <limits>
-#include <filesystem>
 #include <memory>
 #include <omp.h>
 #include <fatrop/fatrop.hpp>
+
 #include "dibiman/utils/robot.hpp"
+#include "dibiman/fatrop/static-decentralized-ocp.hpp"
+#include "dibiman/fatrop/decentralized-fatrop-helper.hpp"
 
 #include "pinocchio/eigen-common.hpp"
 #include "pinocchio/algorithm/model.hpp"
@@ -21,18 +23,17 @@ using namespace Eigen;
 
 namespace fatrop {
 
-typedef fatrop::OcpAbstractTpl<RobotManipulator> ocp;
+typedef OcpAbstractTpl<dibiman::DecentralizedManipulatorStatic> DecentralizedOcp;
 
-ocp::OcpAbstractTpl(const std::string & modelpath, const std::vector<std::string> & joints, const int & n_threads)
+DecentralizedOcp::OcpAbstractTpl()
 {
-    initPinData(modelpath, joints, n_threads);
 }
 
-Index ocp::get_nx(const Index k) const { return nx; }
+Index DecentralizedOcp::get_nx(const Index k) const { return nx; }
 
-Index ocp::get_nu(const Index k) const
+Index DecentralizedOcp::get_nu(const Index k) const
 {
-    if (k == K_ - 1)
+    if (k == _K - 1)
     {
         return 0;
     }
@@ -42,39 +43,38 @@ Index ocp::get_nu(const Index k) const
     }
 }
 
-Index ocp::get_ng(const Index k) const
+Index DecentralizedOcp::get_ng(const Index k) const
 {
     if (k == 0)
     {
-        return vel_size + nx + nv;
+        return twist_t + nx + nv;
     }
-    else if (k == K_ - 1)
+    else if (k == _K - 1)
     {
         return 0;
     }
     else
     {
-        return nv + vel_size;
+        return nv + twist_t;
     }
 };
 
-Index ocp::get_ng_ineq(const Index k) const { return 0; };
-Index ocp::get_horizon_length() const { return K_; };
-Index ocp::eval_BAbt(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
+Index DecentralizedOcp::get_ng_ineq(const Index k) const { return 0; };
+Index DecentralizedOcp::get_horizon_length() const { return _K; };
+Index DecentralizedOcp::eval_BAbt(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
                 MAT *res, const Index k)
 {
-    // set zero
     blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
 
     // B.T
     blasfeo_diare_wrap(nq, 1.f, res, 0, nq); 
     // A.T
     blasfeo_diare_wrap(nq, 1.f, res, nx, 0); 
-    blasfeo_diare_wrap(nq, dt_, res, nx + nq, 0); 
+    blasfeo_diare_wrap(nq, _dt, res, nx + nq, 0); 
     blasfeo_diare_wrap(nq, 1.f, res, nx + nq, nq); 
     return 0;
 }
-Index ocp::eval_RSQrqt(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
+Index DecentralizedOcp::eval_RSQrqt(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
                   const Scalar *lam_dyn_k, const Scalar *lam_eq_k, const Scalar *lam_eq_ineq_k,
                   MAT *res, const Index k)
 {
@@ -82,7 +82,7 @@ Index ocp::eval_RSQrqt(const Scalar *objective_scale, const Scalar *inputs_k, co
     blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
     const Scalar s = objective_scale[0];
 
-    if (k == K_ - 1)
+    if (k == _K - 1)
     {                              
         blasfeo_diare_wrap(nx, s * 2 * _Qx_N, res, 0, 0);
         // return 0;
@@ -94,9 +94,9 @@ Index ocp::eval_RSQrqt(const Scalar *objective_scale, const Scalar *inputs_k, co
     }
     return 0;
 };
-Index ocp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
+Index DecentralizedOcp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
 {
-    if (k == K_ - 1) return 0;
+    if (k == _K - 1) return 0;
 
     /* RNEA constraint
      * h(q, v, a, tau) = rnea(q, v, a) - tau = 0
@@ -106,7 +106,7 @@ Index ocp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, co
      * 
      *
      * Jacobian constraint
-     * h(q, v, a, tau) = J(q) * v - (numerical v_des)
+     * h(q, v, a, tau) = J(q) * v - v_ref (const w.r.t. (q, v))
      * dh/da, dh/dtau, dh/dq, dh/da = dh/d(uk, xk)
      * [0, 0, dh/dq, J(q)] = dh/d(uk, xk)
      * dh/da = 0
@@ -115,9 +115,9 @@ Index ocp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, co
      */
 
     const int thread_id = omp_get_thread_num();
-    const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
-    pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
-    _frame_velocity_derivatives & _v_data = _vel_partial_pool[(size_t)thread_id];
+    const pinocchio::Model & _model = _model_pool->getModels()[(size_t)thread_id];
+    pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
+    dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
     _v_data.setZero();
 
     // Put RNEA and Jacobian Derivatives here
@@ -135,7 +135,6 @@ Index ocp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, co
     ///          configuration, velocity and acceleration. As for pinocchio::crba, only the upper
     ///          triangular part of data.M is filled.
 
-    // set zero
     blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
     pinocchio::make_symmetric(_data.M);
 
@@ -149,28 +148,28 @@ Index ocp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, co
 
     if (k == 0)
     {
-        blasfeo_diare_wrap(nx, 1.f, res, nu, nq + vel_size);
+        blasfeo_diare_wrap(nx, 1.f, res, nu, nq + twist_t);
     }
     return 0;
 }
-Index ocp::eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
+Index DecentralizedOcp::eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
              Scalar *res, const Index k)
 {
     for (int i = 0; i < nq; ++i)
     {
-        res[i] = -states_kp1[i] + states_k[i] + dt_ * states_k[i + nq];
+        res[i] = -states_kp1[i] + states_k[i] + _dt * states_k[i + nq];
         res[i + nq] = -states_kp1[i + nq] + states_k[i + nq] + inputs_k[i];
     }
     return 0;
 }
-Index ocp::eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
+Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
 {
     const int thread_id = omp_get_thread_num();
-    const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
-    pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];
-    pinocchio::Motion & _s_vel = _vel_pool[(size_t)thread_id];
+    const pinocchio::Model & _model = _model_pool->getModels()[(size_t)thread_id];
+    pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
+    pinocchio::Motion & _twist = _twist_pool[(size_t)thread_id];
 
-    if (k == K_ - 1) { return 0; }
+    if (k == _K - 1) { return 0; }
     else
     {
         Map<const VectorXd> _q  (states_k, nq);
@@ -178,15 +177,15 @@ Index ocp::eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, c
         Map<const VectorXd> _a  (inputs_k, nq);
 
         pinocchio::rnea(_model, _data, _q, _v, _a);
-        _s_vel = getFrameVelocity(_model, _data, _ee_frame_id, pinocchio::WORLD);
+        _twist = getFrameVelocity(_model, _data, _ee_frame_id, pinocchio::WORLD);
 
         for (int i = 0; i < nq; ++i)
         {
             res[i] = _data.tau[i] - inputs_k[nq + i];
         }
-        for (int i = 0; i < vel_size; ++i)
+        for (int i = 0; i < twist_t; ++i)
         {
-            res[nq + i] = _s_vel.toVector()[i]; // - _vel_ref[i]; // vel_ref uncreated yet
+            res[nq + i] = _twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
         }
     }
 
@@ -194,18 +193,18 @@ Index ocp::eval_g(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, c
     {
         for (int i = 0; i < nq; ++i)
         {
-            res[vel_size + nq + i] = states_k[i]; // - ... q0
-            res[vel_size + nx + i] = states_k[i + nq]; // - ... v0
+            res[twist_t + nq + i] = states_k[i]; // - ... q0
+            res[twist_t + nx + i] = states_k[i + nq]; // - ... v0
         }
     }
     return 0;
 };
-Index ocp::eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
+Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
               Scalar *res, const Index k)
 {
     const Scalar s = objective_scale[0];
 
-    if (k == K_ - 1)
+    if (k == _K - 1)
     {
         for (int i = 0; i < nx; ++i)
         {
@@ -222,13 +221,13 @@ Index ocp::eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const 
     }
     return 0;
 }
-Index ocp::eval_L(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
+Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
              Scalar *res, const Index k)
 {
     *res = 0.0;
     const Scalar s = objective_scale[0];
 
-    if (k == K_ - 1)
+    if (k == _K - 1)
     {
         for (int i = 0; i < nx; ++i)
         {
@@ -246,20 +245,20 @@ Index ocp::eval_L(const Scalar *objective_scale, const Scalar *inputs_k, const S
     }
     return 0;
 }
-Index ocp::eval_Ggt_ineq(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
+Index DecentralizedOcp::eval_Ggt_ineq(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
 {
     return 0;
 };
-Index ocp::eval_gineq(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
+Index DecentralizedOcp::eval_gineq(const Scalar *inputs_k, const Scalar *states_k, Scalar *res, const Index k)
 {
     return 0;
 };
-Index ocp::get_bounds(Scalar *lower, Scalar *upper, const Index k) const
+Index DecentralizedOcp::get_bounds(Scalar *lower, Scalar *upper, const Index k) const
 {
     return 0;
 }
 
-Index ocp::get_initial_xk(Scalar *xk, const Index k) const
+Index DecentralizedOcp::get_initial_xk(Scalar *xk, const Index k) const
 {
     // xk[0] = 0.;
     // xk[1] = 0.;
@@ -267,9 +266,9 @@ Index ocp::get_initial_xk(Scalar *xk, const Index k) const
     // xk[3] = 0.;
     return 0;
 };
-Index ocp::get_initial_uk(Scalar *uk, const Index k) const
+Index DecentralizedOcp::get_initial_uk(Scalar *uk, const Index k) const
 {
-    // if (k == K_ - 1)
+    // if (k == _K - 1)
     //     return 0;
     // uk[0] = 0.;
     // uk[1] = 0.;

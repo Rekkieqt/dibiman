@@ -1,10 +1,68 @@
+#pragma once
+
 #ifndef __dibiman_utils_utils__
 #define __dibiman_utils_utils__
 
+#include "pinocchio/algorithm/frames.hpp"
 #include <casadi/casadi.hpp>
-#include <Eigen/Dense>
+#include "pinocchio/eigen-common.hpp"
+#include <string>
+#include <vector>
 
 namespace dibiman {
+
+    struct ManipulatorParameters {
+        std::string model_path;
+        std::string end_effector_frame_name;
+        std::vector<std::string> reduced_model_joints;
+    };
+
+    struct ObjectParameters {
+        std::string model_path;
+        // shape info ...
+    };
+
+    struct SpatialTwistDerivatives {
+        pinocchio::Data::Matrix6x dq;
+        pinocchio::Data::Matrix6x dv;
+
+        SpatialTwistDerivatives() = default;
+
+        SpatialTwistDerivatives(const int & nv, const int & twist_t = 6) :
+            dq(twist_t, nv),
+            dv(twist_t, nv)
+        {}
+
+        void setZero(void)
+        {
+            dq.setZero();
+            dv.setZero();
+        }
+    };
+
+    struct RNEASecondOrderDerivatives {
+        Eigen::Tensor<double, 2> qq;
+        Eigen::Tensor<double, 2> qv;
+        Eigen::Tensor<double, 2> vv;
+        Eigen::Tensor<double, 2> aq;
+
+        RNEASecondOrderDerivatives() = default;
+
+        RNEASecondOrderDerivatives(const int nv) :
+            qq(nv, nv),
+            qv(nv, nv),
+            vv(nv, nv),
+            aq(nv, nv)
+        {}
+
+        void setZero(void)
+        {
+            qq.setZero();
+            qv.setZero();
+            vv.setZero();
+            aq.setZero();
+        }
+    };
 
     struct armTargetParams {
         Eigen::VectorXd x0;

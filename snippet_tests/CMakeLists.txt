@@ -1,10 +1,5 @@
-cmake_minimum_required(VERSION 3.14)  
-project(fatrop_pinocchio_ocp CXX)
-  
 find_package(fatrop REQUIRED)  
 find_package(blasfeo REQUIRED)  
-find_package(Eigen3 REQUIRED)  
-find_package(pinocchio REQUIRED)  
 find_package(OpenMP REQUIRED)
 find_package(scs REQUIRED)
 find_package(iDynTree REQUIRED)

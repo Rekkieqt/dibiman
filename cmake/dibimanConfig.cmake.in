@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Eigen3 REQUIRED)
+find_dependency(pinocchio REQUIRED)
+find_dependency(OpenMP REQUIRED)
+find_dependency(fatrop REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/dibimanTargets.cmake")
+
+check_required_components(dibiman)
+
