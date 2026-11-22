@@ -1,5 +1,5 @@
-#include <fatrop/fatrop.hpp>
+namespace dibiman {
+    
+}
 
-#include "dibiman/utils/robot.hpp"
-#include "dibiman/fatrop/static-decentralized-ocp.hpp"
 

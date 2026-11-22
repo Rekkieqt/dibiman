@@ -4,8 +4,9 @@
 #define __dibiman_utils_utils__
 
 #include "pinocchio/algorithm/frames.hpp"
-#include <casadi/casadi.hpp>
 #include "pinocchio/eigen-common.hpp"
+#include <fatrop/fatrop.hpp>
+#include <casadi/casadi.hpp>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,21 @@ namespace dibiman {
     struct ObjectParameters {
         std::string model_path;
         // shape info ...
+    };
+
+    struct OcpCosts {
+        /* Running state and control cost */
+        fatrop::Scalar x_k;
+        fatrop::Scalar u_k;
+
+        fatrop::Scalar x_K; /* Terminal state cost */
+
+        OcpCosts() :
+            x_k(1),
+            u_k(1),
+            x_K(10)
+        {}
+
     };
 
     struct SpatialTwistDerivatives {

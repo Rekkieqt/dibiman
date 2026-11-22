@@ -1,62 +1,56 @@
+#pragma once
+
 #ifndef __dibiman_base_nmpc__
 #define __dibiman_base_nmpc__
 
 #include <casadi/casadi.hpp>
 
-#include "pinocchio/algorithm/joint-configuration.hpp"  
-#include "pinocchio/algorithm/kinematics.hpp"  
-#include "pinocchio/algorithm/jacobian.hpp"  
+#include <fatrop/fatrop.hpp>
 
-#include "dibiman/arm/icub-arm.hpp"
+#include "pinocchio/algorithm/model.hpp"
+
 #include "dibiman/utils/utils.hpp"
+#include "dibiman/fatrop/static-decentralized-ocp.hpp"
   
 namespace dibiman {
-    class baseNMPC {
-        protected:
-            /* ocp horizon */
-            int H;
 
-            /* dimensions of state variables */
-            int nx;
-            int nu;
-            int na;
+    using namespace fatrop;
 
-            /* discretization step */
-            double dt;
+    typedef OcpAbstractTpl<dibiman::DecentralizedManipulatorStatic> DecentralizedOcp;
 
-            /* casadi nlp solver function */
-            casadi::Function solver = casadi::Function();
+    class DecentralizedNMPC {
+        std::shared_ptr<DecentralizedOcp> ocp;
+
+        // fatrop::IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedOcp>>(ocp));
+        std::shared_ptr<IpData<OcpType>> ip_data;
+
+        std::shared_ptr<IpAlgorithm<OcpType>> ip_alg; // = builder.build(); // algo
 
         public:
-            /* list of manipulator data type */
-            std::vector<icubArm> armList;
-
-            casadi::Function rnea(const icubArm & _arm);
-
-            casadi::Function inverseModel(const int n_dim);
-
-            casadi::Function forwardModel(const icubArm & _arm);
-
-            casadi::Function armJacobian(const icubArm & _arm);
-
-            void addArmToList(
-                    const std::string & modelpath, 
-                    const std::vector<std::string> & joints_to_use, 
-                    const std::string & name_ee_frame,
-                    const std::string & id
-                    );
-
-            void getNewData(void);
             
-            void setObjectFrame(const pinocchio::SE3 &);
+            DecentralizedNMPC(const pinocchio::Model &, const std::string &, const int &, const int &);
+            /* 1st initialized the ocp + data
+             * 2nd builder(ocp)
+             * 3rd algo = builder.build()
+             */
 
-            void verifyManipulatorList(void);
+            void setCosts(const OcpCosts &);
+            /* set per stage and terminal costs
+             */
 
-            void setObjectFrame(const pinocchio::SE3 &, const std::map<std::string, Eigen::VectorXd> & );
+            void set_dt(const double &);
+            /* set delta t
+             */
 
-            virtual void createOCP(void) = 0;
+            Eigen::VectorXd solve(const Eigen::VectorXd &);
+            /* set x0
+             * set xref (calc uref auto mbe?)
+             * warm_start
+             * algo->optimize()
+             * return sol.value()
+             */
 
-            virtual std::map<std::string, casadi::DM> solve(const std::map<std::string, armTargetParams>&) = 0;
+            void setObjectFrame(const pinocchio::SE3 &); // rethink this
 
     };
 };
