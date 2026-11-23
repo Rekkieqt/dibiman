@@ -1,23 +1,32 @@
-    // inline double get_s(const double & t, const double & Tf)
-    // {
-    //     double x = t / Tf;
-    //     double x3 = x * x * x;
-    //     return a3 * x3 + a4 * x3 * x + a5 * x3 * x * x;
-    // }
+#pragma once
 
-    // inline double get_ds(const double & t, const double & Tf)
-    // {
-    //     double x = t / Tf;
-    //     double x2 = x * x;
-    //     double res = 3 * a3 * x2 + 4 * a4 * x2 * x + 5 * a5 * x2 * x2;
-    //     return res * (1.0)/Tf;
-    // }
+#ifndef __dibiman_trajectory_generator__
+#define __dibiman_trajectory_generator__
 
-    // inline pinocchio::Motion twist_ref(const fatrop::Index k)
-    // {
-    //     double s = get_s(k * dt_, Tf);
-    //     double ds = get_ds(k * dt_, Tf);
-    //     pinocchio::Motion nu = pinocchio::log6(Xi.actInv(Xf));
-    //     pinocchio::SE3 Xs = Xi * pinocchio::exp6(nu * s);
-    //     return Xs.act(nu) * ds;
-    // }
+#include "pinocchio/spatial.hpp"
+#include "pinocchio/algorithm/frames.hpp"
+
+namespace dibiman {
+    class TrajectoryGenerator{
+
+        pinocchio::SE3 initial_X;
+        pinocchio::SE3 final_X;
+        int final_T;
+
+        /* quintic trajectory interpolation constants */
+        static constexpr double a5 = 6;
+        static constexpr double a4 = -15;
+        static constexpr double a3 = 10;
+
+        inline double st(const double&);
+
+        inline double d_st(const double&);
+
+        public:
+        pinocchio::Motion s_twist(const double&);
+        TrajectoryGenerator();
+        void setData(const pinocchio::SE3 &, const pinocchio::SE3 &, const int &);
+    };
+}
+
+#endif //__dibiman_trajectory_generator__

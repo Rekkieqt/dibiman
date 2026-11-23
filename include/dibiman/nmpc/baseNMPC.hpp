@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef __dibiman_base_nmpc__
 #define __dibiman_base_nmpc__
 

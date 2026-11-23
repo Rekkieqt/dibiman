@@ -6,6 +6,7 @@ set(DIBIMAN_SOURCES
     fatrop/decentralized-fatrop-helper.cpp
     fatrop/static-decentralized-ocp.cpp
     utils/robot.cpp
+    utils/trajectory-generation.cpp
     utils/utils.cpp
 )
 

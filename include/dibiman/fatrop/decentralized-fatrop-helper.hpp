@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dibiman/utils/utils.hpp"
+#include "dibiman/utils/trajectory-generation.hpp"
 #include "pinocchio/algorithm/model.hpp"
 #include "pinocchio/algorithm/parallel/rnea.hpp"
 
@@ -28,14 +29,21 @@ struct DecentralizedFatropHelper
     std::vector<pinocchio::Motion> _twist_pool;
     //std::vector<RNEASecondOrderDerivatives> _rnea_derivatives_pool; unused as it takes too long
 
-    Eigen::VectorXd q_ref;
-    Eigen::VectorXd u_ref;
+    Eigen::VectorXd xref;
+    Eigen::VectorXd uref;
 
     Eigen::VectorXd x0;
     //Eigen::VectorXd v_0;
 
     /* written into outside initializer */
     OcpCosts _q;
+    bool _warm = false;
+
+    std::vector<Eigen::VectorXd> _warm_u;
+    std::vector<Eigen::VectorXd> _warm_x;
+
+    bool _trajectory_control = false;
+    std::shared_ptr<TrajectoryGenerator> _traj = nullptr;
 
     void initData(
             const pinocchio::Model & model, 
@@ -61,13 +69,12 @@ struct DecentralizedFatropHelper
             _twist_pool.emplace_back();
         }
 
-        q_ref(nq);
-        q_ref.setZero();
-        u_ref(nv);
-        u_ref.setZero();
-
-        x_0(nx);
-        // v_0(nv);
+        xref(nx);
+        xref.setZero();
+        uref(nu);
+        uref.setZero();
+        x0(nx);
+        x0.setZero();
 
         _q.x_k = 1;
         _q.u_k = 1;
@@ -75,8 +82,17 @@ struct DecentralizedFatropHelper
 
         _dt = 0.05;
         _K = K;
+
+        _warm_u.reserve(_K - 1);
+        _warm_x.reserve(_K);
+
+        for (int k = 0; k < _K; ++k)
+        {
+            _warm_x.emplace_back(nu);
+            if (k < _K - 1) _warm_u.emplace_back(nu);
+        }
     }
-    
+
     // DecentralizedFatropHelper(const pinocchio::Model & model, const std::string & ee_frame_str, const int & n_threads) :
     //     initData(model, ee_frame_str, n_threads)
     // {}

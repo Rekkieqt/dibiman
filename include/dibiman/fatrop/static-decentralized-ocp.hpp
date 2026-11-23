@@ -20,7 +20,7 @@ class OcpAbstractTpl<dibiman::DecentralizedManipulatorStatic> : public dibiman::
         using Index = fatrop::Index;
         using Scalar = fatrop::Scalar;
 
-        OcpAbstractTpl(const pinocchio::Model &, const std::string &, const int &, const int &);
+        OcpAbstractTpl(const pinocchio::Model &, const std::string &, const int &, const int &, const bool& = false);
 
         Index get_nx(const Index k) const;
         Index get_nu(const Index k) const;
