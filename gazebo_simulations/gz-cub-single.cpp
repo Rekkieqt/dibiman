@@ -34,9 +34,11 @@
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
 
+/* OpenMP */
+#include "omp.h"
+
 /* NMPC libraries */
-#include "dibiman/nmpc/centralizedNMPC.hpp"
-#include "dibiman/nmpc/baseNMPC.hpp"
+#include "dibiman/nmpc/distr-nmpc.hpp"
 #include "dibiman/utils/robot.hpp"
 
 /* Gazebo libraries */
@@ -214,205 +216,103 @@ main(int argc, char **argv)
 
     /* __________________________________________ ARM CONTROL START __________________________________________  */
 
-    const std::vector<std::string> joint_list = {"shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_prosup", "wrist_pitch", "wrist_yaw"};
+    const std::vector<std::string> joint_list = {"r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw"};
     const std::vector<std::string> ids = {"right_icub_arm", "left_icub_arm"};
-    const std::vector<std::string> end_effector_frame_names = {"r_hand_dh_frame", "l_hand_dh_frame"};
-    const std::string urdf_path = static_cast<std::string>(std::filesystem::current_path()) + "/../conf/model.urdf";
+    const std::string ee_frame = "r_hand_dh_frame";
+    const std::string model_path = "/home/ubuntu/dibiman/conf/model_FT.urdf";
 
-    std::vector<std::string> right_arm_joint_list;
-    std::vector<std::string> left_arm_joint_list;
+    pinocchio::Model model = dibiman::returnReducedModel(model_path, joint_list);
+    pinocchio::Data data = pinocchio::Data(model);
 
-    for(auto it = joint_list.begin();
-            it != joint_list.end();
-            ++it)
-    {
-        right_arm_joint_list.push_back("r_" + *it);
-        left_arm_joint_list.push_back("l_" + *it);
-    }
-
-    std::vector<std::vector<std::string>> list_of_joints;
-    list_of_joints.push_back(right_arm_joint_list);
-    list_of_joints.push_back(left_arm_joint_list);
-
-    /* nmpc class init */
-    dibiman::centralizedNMPC manip_controller(
-        urdf_path,
-        list_of_joints,
-        end_effector_frame_names,
-        ids);
+    const int horizon = 50;
+    const int n_threads = 4;
+    omp_set_num_threads(n_threads);
+    dibiman::DecentralizedNMPC man(model, ee_frame, horizon, n_threads);
+    man.set_dt(0.01);
   
-    /* ______________ Exposing the created Models and Datas ______________ */
-
-    pinocchio::Model & right_model = manip_controller.armList[0].model;
-    pinocchio::Data & right_data = manip_controller.armList[0].data;
-    pinocchio::FrameIndex & right_hand_id = manip_controller.armList[0].hand_id;
-
-    pinocchio::Model & left_model = manip_controller.armList[1].model;
-    pinocchio::Data & left_data = manip_controller.armList[1].data;
-    pinocchio::FrameIndex & left_hand_id = manip_controller.armList[1].hand_id;
-
     /* ______________ Initial velocity and position vectors ______________ */
 
+    std::cerr << "Linking yarp q and v to Eigen\n\n";
     constexpr double degToPi = M_PI/180;
 
     /* Right Arm */
-    int right_num_jnts;
-    right_encoders->getAxes(&right_num_jnts);
+    int torque_dim;
+    right_encoders->getAxes(&torque_dim);
 
-    double* q_r_arr = new double[right_num_jnts]; /* joint positions */
-    Eigen::Map<Eigen::VectorXd> q_r_vec(q_r_arr, right_model.nv);
-    q_r_vec.setZero();
+    double* q_arr = new double[torque_dim]; /* joint positions */
+    Eigen::Map<Eigen::VectorXd> q(q_arr, model.nv);
+    q.setZero();
 
-    double* v_r_arr = new double[right_num_jnts]; /* joint velocities */
-    Eigen::Map<Eigen::VectorXd> v_r_vec(v_r_arr, right_model.nv);
-    v_r_vec.setZero();
+    double* v_arr = new double[torque_dim]; /* joint velocities */
+    Eigen::Map<Eigen::VectorXd> v(v_arr, model.nv);
+    v.setZero();
 
-    right_encoders->getEncoders(q_r_arr);
-    q_r_vec *= degToPi;
+    double* tau_arr = new double[torque_dim];
+    Eigen::Map<Eigen::VectorXd> tau(tau_arr, model.nv);
 
-    pinocchio::forwardKinematics(right_model, right_data, q_r_vec);
-    pinocchio::updateFramePlacements(right_model, right_data);
+    Eigen::VectorXd x(model.nv + model.nv);
 
-    /* ______________ Setting Up reference Frames ______________ */
-
-    const Eigen::VectorXd right_arm_pos = right_data.oMf[right_hand_id].translation();
-    const Eigen::VectorXd left_arm_pos = left_data.oMf[left_hand_id].translation();
-
-    const Eigen::Vector3d object_pos = .5f * (right_arm_pos + left_arm_pos);
-    pinocchio::SE3 object_frame(Eigen::Matrix3d::Identity(), object_pos);
-
-    std::map<std::string, Eigen::VectorXd> jointData;
-    manip_controller.setObjectFrame(object_frame, jointData);
-
-    pinocchio::SE3 & right_hand_frame = right_data.oMf[right_hand_id];
-    pinocchio::SE3 & left_hand_frame = left_data.oMf[left_hand_id];
-
-    /* ______________ Multiple point structure ______________ */
-
-    typedef std::pair<Eigen::VectorXd, Eigen::VectorXd> q_u_RefPair;
-    typedef std::pair<q_u_RefPair, q_u_RefPair> BimanualPair;
-    typedef std::vector<BimanualPair> TrajectoryList;
+    pinocchio::forwardKinematics(model, data, q);
+    pinocchio::updateFramePlacements(model, data);
 
     /* ______________ Object grasp movement 1 - hover ______________ */
 
     Eigen::VectorXd cub_to_obj_vec = gz_obj_p_vec - gz_icub_p_vec;
     std::cout << "gazebo obj pose rel: " << cub_to_obj_vec.transpose() << std::endl;
 
-    const Eigen::Vector3d right_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.1, 0.0);
-    const Eigen::Vector3d left_pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, -.1, 0.0);
+    const Eigen::Vector3d pos_ref = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.1, 0.0);
 
     const Eigen::Vector3d right_rpy(M_PI/2.0f, M_PI, 0);
     const Eigen::Matrix3d r_R = pinocchio::rpy::rpyToMatrix(right_rpy);
-    pinocchio::SE3 r_H_ref(r_R, right_pos_ref);
+    pinocchio::SE3 r_H_ref(r_R, cub_to_obj_vec);
     std::cout << "Right H ref : " << r_H_ref << std::endl;
-    // const Eigen::Matrix3d r_curr_R = right_data.oMf[right_hand_id].rotation();
 
-    const Eigen::Vector3d left_rpy(M_PI/2.0f, M_PI, 0);
-    const Eigen::Matrix3d l_R = pinocchio::rpy::rpyToMatrix(left_rpy);
-    pinocchio::SE3 l_H_ref(l_R, left_pos_ref);
-    std::cout << "Left H ref : " << l_H_ref << std::endl;
-    // const Eigen::Matrix3d l_curr_R = left_data.oMf[left_hand_id].rotation();
+    /* ______________ Inverse Kinematics ______________ */
 
-    /* ______________ Object grasp movement 2 - closure ______________ */
-
-    const Eigen::Vector3d right_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, 0.04, 0.0);
-    const Eigen::Vector3d left_pos_ref_2 = cub_to_obj_vec + Eigen::Vector3d(0.0, -.04, 0.0);
-
-    const pinocchio::SE3 r_H_ref_2(r_R, right_pos_ref_2);
-    const pinocchio::SE3 l_H_ref_2(l_R, left_pos_ref_2);
-
-    /* ______________ Inverse Kinematics - hover ______________ */
-
-    const int n_dim = right_model.nv;
-
-    Eigen::VectorXd q_r_ref_vec = dibiman::inverseKinematics(
-            right_model,
-            right_data,
-            q_r_vec,
+    Eigen::VectorXd q_ref = dibiman::inverseKinematics(
+            model,
+            data, 
+            q, 
             r_H_ref,
-            right_hand_id,
-            "full"
-            );
-    std::cout << "q r ref : " << q_r_ref_vec.transpose() << std::endl;
-    Eigen::VectorXd v_r_ref_vec(n_dim);
-    v_r_ref_vec.setZero();
+            model.getFrameId(ee_frame));
 
-    Eigen::VectorXd u_r_ref_vec = pinocchio::rnea(right_model, right_data, q_r_ref_vec, v_r_ref_vec, v_r_ref_vec);
-    std::cout << "u r ref : " << u_r_ref_vec.transpose() << std::endl;
-
-    /* ______________ Inverse Kinematics - closure ______________ */
-
-    Eigen::VectorXd q_r_ref_vec_2 = dibiman::inverseKinematics(
-            right_model,
-            right_data,
-            q_r_vec,
-            r_H_ref_2,
-            right_hand_id,
-            "full"
-            );
-
-    Eigen::VectorXd u_r_ref_vec_2 = pinocchio::rnea(right_model, right_data, q_r_ref_vec_2, v_r_ref_vec, v_r_ref_vec);
-
+    man.setRef(q_ref);
 
     /* ____________ Solver Structs Init _________________ */
 
-    std::map<std::string, dibiman::armTargetParams> bimanual_solve_params;
-
-    dibiman::armTargetParams right_params(n_dim);
-    dibiman::armTargetParams left_params(n_dim);
-
-    bimanual_solve_params[ids[0]] = right_params;
-    bimanual_solve_params[ids[1]] = left_params;
-
-    right_params.x0 << q_r_vec, v_r_vec;
-    right_params.xref << q_r_ref_vec, v_r_ref_vec;
-    right_params.uref << u_r_ref_vec;
-
-    std::map<std::string, casadi::DM> u_star;
-    u_star[ids[0]] = casadi::DM::zeros(n_dim);
-    u_star[ids[1]] = casadi::DM::zeros(n_dim);
-
     const int joint_idx_arr[] = {0, 1, 2, 3, 4, 5, 6};
     
-    for (int i = 0; i < n_dim; i++) {
+    for (int i = 0; i < torque_dim; i++) {
         right_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
     }
 
     worldControl(0, "grasp-world", false);
 
-    std::cout << "Initiating Hover" << std::endl;
+    std::cout << "Initiating\n\n";
     
-    constexpr double eps = 0.08;
+    Time::delay(5);
+
     for (int i = 0;; i++) {
 
-        right_encoders->getEncoders(q_r_arr);
+        right_encoders->getEncoders(q_arr);
+        right_encoders->getEncoderSpeeds(v_arr);
 
-        right_encoders->getEncoderSpeeds(v_r_arr);
+        x << q, v;
+        tau = man.solve(x);
 
-
-        right_params.x0 << q_r_vec, v_r_vec;
-        right_params.x0 *= degToPi;
-
-        bimanual_solve_params[ids[0]] = right_params;
-
-        u_star = manip_controller.solve(bimanual_solve_params);
-        double* u_r = u_star.at(ids[0]).ptr();
-
-        bool ok = right_torqueControl->setRefTorques(n_dim, joint_idx_arr, u_r);
+        bool ok = right_torqueControl->setRefTorques(torque_dim, joint_idx_arr, tau_arr);
         if (!ok) return 1;
 
         static double timestamp;
         const size_t ft_dim = 6;
 
-        Time::delay(0.01);
+        Time::delay(0.005);
 
-        pinocchio::forwardKinematics(right_model, right_data, q_r_vec * degToPi);
-        pinocchio::updateFramePlacements(right_model, right_data);
+        pinocchio::forwardKinematics(model, data, q * degToPi);
+        pinocchio::updateFramePlacements(model, data);
 
-        // std::cout << "right pos: " << right_data.oMf[right_hand_id].translation().transpose() << "\n";
-        
+        /*
         pinocchio::Motion err_r = pinocchio::log6(r_H_ref.actInv(right_hand_frame));
-        // Eigen::VectorXd err_r = r_H_ref.translation() - right_hand_frame.translation();
         double err_r_norm = err_r.toVector().norm();
 
         if (i%10 == 0) {
@@ -433,8 +333,9 @@ main(int argc, char **argv)
             right_params.uref = u_r_ref_vec_2;
 
         }
+        */
 
-        worldControl(5, "grasp-world");
+        worldControl(10, "grasp-world");
 
     }
 

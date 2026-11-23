@@ -116,7 +116,7 @@ class RobotModel
         std::vector<pinocchio::Motion> _vel_pool;
 
         void initPinData(const std::string & modelpath, const std::vector<std::string> & list_joints_to_use, const int & n_threads) {
-            _model = dibiman::getArmModel(modelpath, list_joints_to_use);
+            _model = dibiman::returnReducedModel(modelpath, list_joints_to_use);
             _data = pinocchio::Data(_model);
             _pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
             nq = _model.nq;

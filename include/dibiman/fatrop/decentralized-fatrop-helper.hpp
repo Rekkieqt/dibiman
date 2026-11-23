@@ -43,7 +43,7 @@ struct DecentralizedFatropHelper
     std::vector<Eigen::VectorXd> _warm_x;
 
     bool _trajectory_control = false;
-    std::shared_ptr<TrajectoryGenerator> _traj = nullptr;
+    std::shared_ptr<TrajectoryGenerator> _traj;
 
     void initData(
             const pinocchio::Model & model, 
@@ -59,21 +59,21 @@ struct DecentralizedFatropHelper
         nv = _model.nv;
 
         nx = nq + nv;
-        nu = nv + _model.njoints - 1;
+        nu = 2 * nv;
 
         _ee_frame_idx = _model.getFrameId(ee_frame_str);
 
         for (int i = 0; i < n_threads; ++i)
         {
-            _twist_derivatives_pool.emplace_back(twist_t, nv);
+            _twist_derivatives_pool.emplace_back(nv);
             _twist_pool.emplace_back();
         }
 
-        xref(nx);
+        xref.resize(nx);
         xref.setZero();
-        uref(nu);
+        uref.resize(nu);
         uref.setZero();
-        x0(nx);
+        x0.resize(nx);
         x0.setZero();
 
         _q.x_k = 1;
@@ -88,7 +88,7 @@ struct DecentralizedFatropHelper
 
         for (int k = 0; k < _K; ++k)
         {
-            _warm_x.emplace_back(nu);
+            _warm_x.emplace_back(nx);
             if (k < _K - 1) _warm_u.emplace_back(nu);
         }
     }

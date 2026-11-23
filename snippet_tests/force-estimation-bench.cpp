@@ -28,7 +28,7 @@ main()
     const std::vector<std::string> joint_list = {"r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw"};
     {
         using namespace pinocchio;
-        Model model = dibiman::getArmModel(modelpath, joint_list);
+        Model model = dibiman::returnReducedModel(modelpath, joint_list);
         Data data = Data(model);
 
         Force::Vector6 f_vec;

@@ -44,9 +44,9 @@ namespace dibiman {
 
         SpatialTwistDerivatives() = default;
 
-        SpatialTwistDerivatives(const int & nv, const int & twist_t = 6) :
-            dq(twist_t, nv),
-            dv(twist_t, nv)
+        SpatialTwistDerivatives(const int & nv) :
+            dq(6, nv),
+            dv(6, nv)
         {}
 
         void setZero(void)

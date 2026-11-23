@@ -24,7 +24,7 @@ DecentralizedNMPC::DecentralizedNMPC(
     OptionRegistry options;
     ip_alg = builder.with_options_registry(&options).build();
     ip_data = builder.get_ipdata();
-    options.set_option("print_level", 0);
+    options.set_option("print_level", 1);
 
     // trajectory class
     traj = std::make_shared<TrajectoryGenerator>();

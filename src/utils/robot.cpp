@@ -23,8 +23,8 @@ namespace dibiman {
         pinocchio::Data & data,  
         const pinocchio::Model::ConfigVectorType & q0,  
         const pinocchio::SE3 & Href,  
-        const pinocchio::FrameIndex frame_id,  
-        const std::string & target = "full")  
+        const pinocchio::FrameIndex & frame_id,  
+        const std::string & target)  
     {  
         using namespace pinocchio;
 
@@ -92,8 +92,8 @@ namespace dibiman {
     };
       
     pinocchio::Model
-    getArmModel(const std::string & modelpath,  
-                const std::vector<std::string> & list_joints_to_use)
+    returnReducedModel(const std::string & modelpath,  
+            const std::vector<std::string> & list_joints_to_use)
     {  
         using namespace pinocchio;
 
@@ -129,9 +129,9 @@ namespace dibiman {
 
         Eigen::VectorXd q_neutral = neutral(model);
 
-        Model arm_model = buildReducedModel(model, list_joints_to_lock_id, q_neutral);
+        Model reduced_model = buildReducedModel(model, list_joints_to_lock_id, q_neutral);
 
-        return arm_model;
+        return reduced_model;
     };
 }
 

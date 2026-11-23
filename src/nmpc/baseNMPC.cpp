@@ -148,7 +148,7 @@ baseNMPC::addArmToList(
 
     _arm.id = id;
     _arm.hand_name = name_ee_frame;
-    _arm.model = getArmModel(modelpath, joints_to_use);
+    _arm.model = returnReducedModel(modelpath, joints_to_use);
     _arm.data = pinocchio::Data(_arm.model);
     _arm.hand_id = _arm.model.getFrameId(name_ee_frame);
 

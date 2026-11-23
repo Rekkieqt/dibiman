@@ -22,7 +22,7 @@ main()
     const std::string modelpath = static_cast<std::string>(std::filesystem::current_path()) + "/../../conf/model.urdf";
     const std::vector<std::string> joint_list = {"r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw"};
 
-    pinocchio::Model _model = dibiman::getArmModel(modelpath, joint_list);
+    pinocchio::Model _model = dibiman::returnReducedModel(modelpath, joint_list);
     pinocchio::Data _data = pinocchio::Data(_model);
 
     VectorXd _q = pinocchio::neutral(_model);

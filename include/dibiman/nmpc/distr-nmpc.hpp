@@ -32,9 +32,8 @@ namespace dibiman {
         public:
             
             DecentralizedNMPC(const pinocchio::Model &, const std::string &, const int &, const int &); // , const bool& = false);
-            /* 1st initialized the ocp + data
-             * 2nd builder(ocp)
-             * 3rd algo = builder.build()
+            /* initialized the ocp + data
+             * builder(ocp)
              */
 
             void setCosts(const OcpCosts &);
