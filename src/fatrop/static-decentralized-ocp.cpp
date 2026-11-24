@@ -80,7 +80,7 @@ Index DecentralizedOcp::eval_BAbt(const Scalar *states_kp1, const Scalar *inputs
     blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
 
     // B.T
-    blasfeo_diare_wrap(nq, 1.f, res, 0, nq); 
+    blasfeo_diare_wrap(nq, _dt, res, 0, nq); 
     // A.T
     blasfeo_diare_wrap(nq, 1.f, res, nx, 0); 
     blasfeo_diare_wrap(nq, _dt, res, nx + nq, 0); 
@@ -97,13 +97,13 @@ Index DecentralizedOcp::eval_RSQrqt(const Scalar *objective_scale, const Scalar 
 
     if (k == _K - 1)
     {                              
-        blasfeo_diare_wrap(nx, s * 2 * _qcost.x_K, res, 0, 0);
+        blasfeo_diare_wrap(nx, s * _qcost.x_K, res, 0, 0);
         // return 0;
-    }                              
+    }
     else
-    {                              
-        blasfeo_diare_wrap(nu, s * 2 * _qcost.u_k, res, 0, 0);
-        blasfeo_diare_wrap(nx, s * 2 * _qcost.x_k, res, nu, nu);
+    {                            
+        blasfeo_diare_wrap(nu, s * _qcost.u_k, res, 0, 0);
+        blasfeo_diare_wrap(nx, s * _qcost.x_k, res, nu, nu);
     }
 
     /* ==== Full RNEA Hessian Implementation ====
@@ -232,7 +232,7 @@ Index DecentralizedOcp::eval_b(const Scalar *states_kp1, const Scalar *inputs_k,
     for (int i = 0; i < nq; ++i)
     {
         res[i] = -states_kp1[i] + states_k[i] + _dt * states_k[i + nq];
-        res[i + nq] = -states_kp1[i + nq] + states_k[i + nq] + inputs_k[i];
+        res[i + nq] = -states_kp1[i + nq] + states_k[i + nq] + _dt * inputs_k[i];
     }
     return 0;
 }
@@ -293,7 +293,7 @@ Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inp
         for (int i = 0; i < nx; ++i)
         {
             const Scalar x_err = states_k[i] - xref[i];
-            res[i] = 2 * _qcost.x_K * x_err * s;
+            res[i] = _qcost.x_K * x_err * s;
         }
     }
     else
@@ -303,8 +303,8 @@ Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inp
             const Scalar u_err = inputs_k[i] - uref[i];
             const Scalar x_err = states_k[i] - xref[i];
 
-            res[i] = 2 * _qcost.u_k * u_err * s;
-            res[nx + i] = 2 * _qcost.x_k * x_err * s;
+            res[i] = _qcost.u_k * u_err * s;
+            res[nx + i] = _qcost.x_k * x_err * s;
         }
     }
     return 0;
@@ -322,17 +322,17 @@ Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inpu
             const Scalar err = states_k[i] - xref[i];
             *res+= _qcost.x_K * err * err;
         }
-        *res*= s;
-    }
+        *res*= .5 * s;
+    } /* 0 cost for initial state, could turn hessian semi-def */
     else
     {
-        for (int i = 0; i < nx; ++i)
+        for (int i = 0; i < nu; ++i)
         {
             const Scalar u_err = inputs_k[i] - uref[i];
             const Scalar x_err = states_k[i] - xref[i];
             *res+= _qcost.u_k * u_err * u_err + _qcost.x_k * x_err * x_err;
         }
-        *res*= s;
+        *res*= .5 * s;
     }
     return 0;
 }

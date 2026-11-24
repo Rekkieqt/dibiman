@@ -26,14 +26,23 @@ namespace dibiman {
     struct OcpCosts {
         /* Running state and control cost */
         fatrop::Scalar x_k;
+
+        fatrop::Scalar q_k;
+        fatrop::Scalar v_k;
         fatrop::Scalar u_k;
 
         fatrop::Scalar x_K; /* Terminal state cost */
 
+        fatrop::Scalar q_K; /* Terminal state cost */
+        fatrop::Scalar v_K; /* Terminal state cost */
+
         OcpCosts() :
             x_k(1),
+            q_k(1),
+            v_k(1),
             u_k(1),
-            x_K(10)
+            x_K(10),
+            v_K(10)
         {}
 
     };

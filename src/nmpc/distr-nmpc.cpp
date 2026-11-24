@@ -94,7 +94,8 @@ Eigen::VectorXd
 DecentralizedNMPC::solve(const Eigen::VectorXd & x0)
 {
     ocp->x0 = x0;
-    ip_alg->optimize();
+    auto ret = ip_alg->optimize();
+    if (ret == IpSolverReturnFlag::StopAtAcceptablePoint) std::cout << "AcceptablePointFlag\n\n";
     const auto &info = ip_data->info();
     const VecRealView & x_opt = ip_data->current_iterate().primal_x();
     const Scalar *u = x_opt.data() + info.offsets_primal_u[0] + ocp->nv;

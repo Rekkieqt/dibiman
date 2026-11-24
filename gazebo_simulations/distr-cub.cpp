@@ -48,9 +48,9 @@ main()
     dibiman::DecentralizedNMPC man(model, ee_frame, horizon, n_threads);
     dibiman::ManipulatorNMPC man_cas(model, ee_frame, horizon);
     dibiman::OcpCosts q_costs; 
-    q_costs.x_k = 10;
-    q_costs.u_k = .1;
-    q_costs.x_K = 50;
+    q_costs.x_k = 25;
+    q_costs.u_k = .5;
+    q_costs.x_K = 100;
 
     man.set_dt(dt);
     man.setCosts(q_costs);
@@ -101,7 +101,7 @@ main()
 
     /* ____________ Simulation _________________ */
 
-    const int T = 30;
+    const int T = 150;
     int N = (int)(T/dt);
 
     Eigen::VectorXd x_next(x.size());
@@ -116,12 +116,14 @@ main()
     for (int i = 0; i < N; i++) {
 
         tau = man.solve(x);
+        // std::cout << tau.transpose() << "\n\n";
         x_next = dibiman::descreteForwardDynamics(model, x, tau, dt);
         x = x_next;
 
-        tau_cas = man_cas.solve(x_cas);
-        x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
-        x_cas = x_next_cas;
+        // tau_cas = man_cas.solve(x_cas);
+        // std::cout << tau_cas << "\n\n";
+        // x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
+        // x_cas = x_next_cas;
 
         // pinocchio::forwardKinematics(model, data, x.head(model.nq));
         // pinocchio::updateFramePlacements(model, data);
