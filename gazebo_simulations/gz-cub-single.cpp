@@ -236,18 +236,18 @@ main(int argc, char **argv)
     constexpr double degToPi = M_PI/180;
 
     /* Right Arm */
-    int torque_dim;
-    right_encoders->getAxes(&torque_dim);
+    int n_joints;
+    right_encoders->getAxes(&n_joints);
 
-    double* q_arr = new double[torque_dim]; /* joint positions */
+    double* q_arr = new double[n_joints]; /* joint positions */
     Eigen::Map<Eigen::VectorXd> q(q_arr, model.nv);
     q.setZero();
 
-    double* v_arr = new double[torque_dim]; /* joint velocities */
+    double* v_arr = new double[n_joints]; /* joint velocities */
     Eigen::Map<Eigen::VectorXd> v(v_arr, model.nv);
     v.setZero();
 
-    double* tau_arr = new double[torque_dim];
+    double* tau_arr = new double[n_joints];
     Eigen::Map<Eigen::VectorXd> tau(tau_arr, model.nv);
 
     Eigen::VectorXd x(model.nv + model.nv);
@@ -282,7 +282,7 @@ main(int argc, char **argv)
 
     const int joint_idx_arr[] = {0, 1, 2, 3, 4, 5, 6};
     
-    for (int i = 0; i < torque_dim; i++) {
+    for (int i = 0; i < model.nv; i++) {
         right_controlMode->setControlMode(i, VOCAB_CM_TORQUE);
     }
 
@@ -300,13 +300,13 @@ main(int argc, char **argv)
         x << q, v;
         tau = man.solve(x);
 
-        bool ok = right_torqueControl->setRefTorques(torque_dim, joint_idx_arr, tau_arr);
+        bool ok = right_torqueControl->setRefTorques(model.nv, joint_idx_arr, tau_arr);
         if (!ok) return 1;
 
         static double timestamp;
         const size_t ft_dim = 6;
 
-        Time::delay(0.005);
+        Time::delay(0.01);
 
         pinocchio::forwardKinematics(model, data, q * degToPi);
         pinocchio::updateFramePlacements(model, data);

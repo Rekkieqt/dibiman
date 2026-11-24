@@ -82,14 +82,14 @@ main()
             r_H_ref,
             ee_idx);
 
-    // man.setRef(q_ref);
+    man.setRef(q_ref);
 
     /* ____________ Solver Structs Init _________________ */
 
     for (int i = 0; i < 10; i++) {
 
         x << q, v;
-        // tau = man.solve(x);
+        tau = man.solve(x);
 
         pinocchio::forwardKinematics(model, data, q * degToPi);
         pinocchio::updateFramePlacements(model, data);

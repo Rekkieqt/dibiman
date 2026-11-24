@@ -23,8 +23,9 @@ DecentralizedNMPC::DecentralizedNMPC(
     IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedManipulatorStatic>>(ocp));
     OptionRegistry options;
     ip_alg = builder.with_options_registry(&options).build();
+    options.set_option("suppress_banner", true);
+    options.set_option("print_level", 0);
     ip_data = builder.get_ipdata();
-    options.set_option("print_level", 1);
 
     // trajectory class
     traj = std::make_shared<TrajectoryGenerator>();
