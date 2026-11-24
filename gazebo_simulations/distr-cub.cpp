@@ -22,7 +22,9 @@
 
 /* NMPC libraries */
 #include "dibiman/nmpc/distr-nmpc.hpp"
+#include "dibiman/nmpc/manipulator-nmpc.hpp"
 #include "dibiman/utils/robot.hpp"
+#include "dibiman/utils/utils.hpp"
 
 using namespace pinocchio;
 
@@ -41,14 +43,23 @@ main()
 
     const int horizon = 50;
     const int n_threads = 4;
+    const double dt = 0.05;
     omp_set_num_threads(n_threads);
     dibiman::DecentralizedNMPC man(model, ee_frame, horizon, n_threads);
-    // man.set_dt(0.01);
+    dibiman::ManipulatorNMPC man_cas(model, ee_frame, horizon);
+    dibiman::OcpCosts q_costs; 
+    q_costs.x_k = 10;
+    q_costs.u_k = .1;
+    q_costs.x_K = 50;
+
+    man.set_dt(dt);
+    man.setCosts(q_costs);
+
+    man_cas.set_dt(dt);
+    man_cas.setCosts(q_costs);
+    man_cas.create();
   
     /* ______________ Initial velocity and position vectors ______________ */
-
-    std::cerr << "Linking yarp q and v to Eigen\n\n";
-    constexpr double degToPi = M_PI/180;
 
     Eigen::VectorXd q(model.nv);
     q.setZero();
@@ -75,27 +86,52 @@ main()
 
     /* ______________ Inverse Kinematics ______________ */
 
+    /*
     Eigen::VectorXd q_ref = dibiman::inverseKinematics(
             model,
             data, 
             q, 
             r_H_ref,
             ee_idx);
+            */
+    Eigen::VectorXd qref = pinocchio::randomConfiguration(model);
 
-    man.setRef(q_ref);
+    man.setRef(qref);
+    man_cas.setRef(qref);
 
-    /* ____________ Solver Structs Init _________________ */
+    /* ____________ Simulation _________________ */
 
-    for (int i = 0; i < 10; i++) {
+    const int T = 30;
+    int N = (int)(T/dt);
 
-        x << q, v;
+    Eigen::VectorXd x_next(x.size());
+    x << q, v;
+
+    /* casadi solver copies */
+    Eigen::VectorXd x_cas, x_next_cas, tau_cas;
+    x_cas = x; 
+    x_next_cas = x_next;
+    tau_cas = tau;
+
+    for (int i = 0; i < N; i++) {
+
         tau = man.solve(x);
+        x_next = dibiman::descreteForwardDynamics(model, x, tau, dt);
+        x = x_next;
 
-        pinocchio::forwardKinematics(model, data, q * degToPi);
-        pinocchio::updateFramePlacements(model, data);
+        // tau_cas = man_cas.solve(x_cas);
+        // x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
+        // x_cas = x_next_cas;
+
+        // pinocchio::forwardKinematics(model, data, x.head(model.nq));
+        // pinocchio::updateFramePlacements(model, data);
 
     }
+    std::cout << "Final x: " << x.transpose() << "\n\n";
+    std::cout << "Desired q: " << qref.transpose() << "\n\n";
 
+    std::cout << "Final x_cas: " << x_cas.transpose() << "\n\n";
+    std::cout << "Desired q: " << qref.transpose() << "\n\n";
     return 0;
 }
 

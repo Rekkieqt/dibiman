@@ -190,6 +190,9 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
     pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
     pinocchio::Motion & _twist = _twist_pool[(size_t)thread_id];
 
+    fatrop::Index k0_offset_q = nq;
+    fatrop::Index k0_offset_v = nx;
+
     if (k == _K - 1) { return 0; }
     else
     {
@@ -198,7 +201,6 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
         Map<const VectorXd> _a  (inputs_k, nq);
 
         pinocchio::rnea(_model, _data, _q, _v, _a);
-        _twist = getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
 
         for (int i = 0; i < nq; ++i)
         {
@@ -206,12 +208,15 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
         }
         if (_trajectory_control) 
         {
+            _twist = getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
             const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
             for (int i = 0; i < twist_t; ++i)
             {
                 res[nq + i] = _twist_err.toVector()[i];
                 // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
             }
+            k0_offset_q += twist_t;
+            k0_offset_v += twist_t;
         }
     }
 
@@ -219,8 +224,8 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
     {
         for (int i = 0; i < nq; ++i)
         {
-            res[twist_t + nq + i] = states_k[i] - x0[i]; // - ... q0
-            res[twist_t + nx + i] = states_k[i + nq] - x0[i + nq]; // - ... v0
+            res[k0_offset_q + i] = states_k[i] - x0[i]; // - ... q0
+            res[k0_offset_v + i] = states_k[i + nq] - x0[i + nq]; // - ... v0
         }
     }
     return 0;
@@ -262,8 +267,9 @@ Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inpu
         for (int i = 0; i < nx; ++i)
         {
             const Scalar err = states_k[i] - xref[i];
-            *res+= _q.x_K * err * err * s;
+            *res+= _q.x_K * err * err;
         }
+        *res*= s;
     }
     else
     {
@@ -315,7 +321,7 @@ Index DecentralizedOcp::get_initial_uk(Scalar *uk, const Index k) const
     // Eigen::VectorXd & q0 = x0.head(nq);
     // Eigen::VectorXd & v0 = x0.tail(nv);
     // pinocchio::rnea(_model, _data, q0, v0, v0);
-    for (int i = 0; i < nv; ++i) uk[i] = uref[nv + i];
+    for (int i = 0; i < nv; ++i) uk[nv + i] = uref[nv + i];
     return 0;
 };
 }

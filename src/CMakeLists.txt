@@ -3,6 +3,7 @@ set(DIBIMAN_SOURCES
     nmpc/baseNMPC.cpp
     nmpc/centralizedNMPC.cpp
     nmpc/distr-nmpc.cpp
+    nmpc/manipulator-nmpc.cpp
     fatrop/decentralized-fatrop-helper.cpp
     fatrop/static-decentralized-ocp.cpp
     utils/robot.cpp

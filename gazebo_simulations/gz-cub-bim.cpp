@@ -519,7 +519,7 @@ main(int argc, char **argv)
     std::cout << "Initiating Hover" << std::endl;
     
     constexpr double eps = 0.08;
-    for (int i = 0;; i++) {
+    for (int i = 0; i < 10; i++) {
 
         left_encoders->getEncoders(q_l_arr);
         right_encoders->getEncoders(q_r_arr);
@@ -544,6 +544,9 @@ main(int argc, char **argv)
         if (!ok) return 1;
         ok = left_torqueControl->setRefTorques(n_dim, joint_idx_arr, u_l);
         if (!ok) return 1;
+
+        std::cout << "State: " << right_params.x0.transpose() << "\n\n";
+        std::cout << "Torque: " << u_star.at(ids[0]) << "\n\n";
 
         static double timestamp;
         const size_t ft_dim = 6;

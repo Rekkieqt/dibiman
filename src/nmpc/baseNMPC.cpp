@@ -242,8 +242,7 @@ baseNMPC::forwardModel(const icubArm & _arm)
     aba(ad_model, ad_data, q_ad, v_ad, tau_ad);
     ::casadi::SX a_ad(model.nv, 1);
 
-    for (Eigen::Index k = 0; k < model.nv; ++k)
-    a_ad(k) = ad_data.ddq[k];
+    for (Eigen::Index k = 0; k < model.nv; ++k) a_ad(k) = ad_data.ddq[k];
 
     // ::casadi::Function eval_aba("eval_aba", ::casadi::SXVector{cs_q, cs_v, cs_tau}, ::casadi::SXVector{a_ad});
     ::casadi::SX cs_x = ::casadi::SX::vertcat({cs_q, cs_v});
@@ -257,6 +256,7 @@ baseNMPC::forwardModel(const icubArm & _arm)
     integrator_opts["simplify"] = true;
     integrator_opts["number_of_finite_elements"] = 1;
     
+    // dt needs to be assigned
     ::casadi::Function discr_aba = ::casadi::integrator("discr_aba", "rk", dae, 0, dt, integrator_opts);
     
     /* Discretization of the model */

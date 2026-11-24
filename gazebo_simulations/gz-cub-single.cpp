@@ -233,7 +233,7 @@ main(int argc, char **argv)
     /* ______________ Initial velocity and position vectors ______________ */
 
     std::cerr << "Linking yarp q and v to Eigen\n\n";
-    constexpr double degToPi = M_PI/180;
+    constexpr double to_pi = M_PI/180;
 
     /* Right Arm */
     int n_joints;
@@ -292,13 +292,16 @@ main(int argc, char **argv)
     
     Time::delay(5);
 
-    for (int i = 0;; i++) {
+    for (int i = 0; ; i++) {
 
         right_encoders->getEncoders(q_arr);
         right_encoders->getEncoderSpeeds(v_arr);
 
         x << q, v;
+        x *= to_pi;
         tau = man.solve(x);
+        std::cout << "State: " << x.transpose() << "\n\n";
+        std::cout << "Torque: " << tau.transpose() << "\n\n";
 
         bool ok = right_torqueControl->setRefTorques(model.nv, joint_idx_arr, tau_arr);
         if (!ok) return 1;
@@ -306,9 +309,9 @@ main(int argc, char **argv)
         static double timestamp;
         const size_t ft_dim = 6;
 
-        Time::delay(0.01);
+        Time::delay(0.05);
 
-        pinocchio::forwardKinematics(model, data, q * degToPi);
+        pinocchio::forwardKinematics(model, data, q * to_pi);
         pinocchio::updateFramePlacements(model, data);
 
         /*
@@ -335,7 +338,7 @@ main(int argc, char **argv)
         }
         */
 
-        worldControl(10, "grasp-world");
+        worldControl(5, "grasp-world");
 
     }
 

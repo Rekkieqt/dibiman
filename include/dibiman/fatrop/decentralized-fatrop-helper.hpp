@@ -49,29 +49,20 @@ struct DecentralizedFatropHelper
             const pinocchio::Model & model, 
             const std::string & ee_frame_str,
             const int & K,
-            const int & n_threads)
+            const int & n_threads = -1)
     {
         _model = model;
         _data = pinocchio::Data(_model);
-        _model_pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
 
         nq = _model.nq;
         nv = _model.nv;
 
         nx = nq + nv;
-        nu = 2 * nv;
-
-        _ee_frame_idx = _model.getFrameId(ee_frame_str);
-
-        for (int i = 0; i < n_threads; ++i)
-        {
-            _twist_derivatives_pool.emplace_back(nv);
-            _twist_pool.emplace_back();
-        }
+        nu = 2 * nv; // u = [a, tau]^T
 
         xref.resize(nx);
         xref.setZero();
-        uref.resize(nu);
+        uref.resize(nu); // only tau is used
         uref.setZero();
         x0.resize(nx);
         x0.setZero();
@@ -90,6 +81,17 @@ struct DecentralizedFatropHelper
         {
             _warm_x.emplace_back(nx);
             if (k < _K - 1) _warm_u.emplace_back(nu);
+        }
+
+        if (n_threads == -1) return;
+
+        _model_pool = std::make_unique<pinocchio::ModelPool>(_model, n_threads);
+        _ee_frame_idx = _model.getFrameId(ee_frame_str);
+
+        for (int i = 0; i < n_threads; ++i)
+        {
+            _twist_derivatives_pool.emplace_back(nv);
+            _twist_pool.emplace_back();
         }
     }
 
