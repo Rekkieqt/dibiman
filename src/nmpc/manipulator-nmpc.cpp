@@ -24,7 +24,7 @@ ManipulatorNMPC::set_dt(const double & dt)
 void
 ManipulatorNMPC::setCosts(const OcpCosts & q)
 {
-    _q = q;
+    _qcost = q;
 }
 
 void
@@ -57,10 +57,10 @@ ManipulatorNMPC::create(void) {
 
     X.push_back(SX::sym("X"+std::to_string(_K), nx));
 
-    DM Qx = _q.x_k * DM::eye(nx);
-    DM Ru = _q.u_k * DM::eye(nv); 
-    DM Qa = _q.u_k * DM::eye(nv);  
-    DM QxN = _q.x_K * DM::eye(nx);  
+    DM Qx = _qcost.x_k * DM::eye(nx);
+    DM Ru = _qcost.u_k * DM::eye(nv); 
+    DM Qa = _qcost.u_k * DM::eye(nv);  
+    DM QxN = _qcost.x_K * DM::eye(nx);  
   
     SX obj = 0;
     std::vector<SX> g; // Equality constraints
@@ -163,7 +163,7 @@ ManipulatorNMPC::solve(const Eigen::VectorXd & xk)
     casadi_int offset_A = offset_U + _K * nv;
     DM uk_dm = x_opt(Slice(offset_U, offset_U + nv));
 
-    Eigen::VectorXd uk(uref.size());
+    Eigen::VectorXd uk(nv);
     std::copy(uk_dm.ptr(), uk_dm.ptr() + uk_dm.numel(), uk.data());
     return  uk;
 };

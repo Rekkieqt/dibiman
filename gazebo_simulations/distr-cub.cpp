@@ -119,9 +119,9 @@ main()
         x_next = dibiman::descreteForwardDynamics(model, x, tau, dt);
         x = x_next;
 
-        // tau_cas = man_cas.solve(x_cas);
-        // x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
-        // x_cas = x_next_cas;
+        tau_cas = man_cas.solve(x_cas);
+        x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
+        x_cas = x_next_cas;
 
         // pinocchio::forwardKinematics(model, data, x.head(model.nq));
         // pinocchio::updateFramePlacements(model, data);

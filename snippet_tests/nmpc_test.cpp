@@ -242,7 +242,7 @@ class fatrop::OcpAbstractTpl<RobotManipulator> : public RobotModel
                 blasfeo_diare_wrap(nu, s * 2 * _Qu_k, res, 0, 0);
                 blasfeo_diare_wrap(nx, s * 2 * _Qx_k, res, nu, nu);
             }
-            /*
+            /* ==== Full RNEA Hessian Implementation ====
             const int thread_id = omp_get_thread_num();
             const pinocchio::Model & _model = _pool->getModels()[(size_t)thread_id];
             pinocchio::Data & _data = _pool->getDatas()[(size_t)thread_id];

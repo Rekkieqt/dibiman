@@ -41,7 +41,7 @@ DecentralizedNMPC::set_dt(const double & dt)
 void
 DecentralizedNMPC::setCosts(const OcpCosts & q)
 {
-    ocp->_q = q;
+    ocp->_qcost = q;
 }
 
 void

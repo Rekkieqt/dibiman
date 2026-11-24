@@ -4,6 +4,7 @@
 #include <fatrop/fatrop.hpp>
 
 #include "dibiman/utils/robot.hpp"
+#include "dibiman/utils/utils.hpp"
 #include "dibiman/utils/trajectory-generation.hpp"
 #include "dibiman/fatrop/static-decentralized-ocp.hpp"
 #include "dibiman/fatrop/decentralized-fatrop-helper.hpp"
@@ -14,6 +15,7 @@
 #include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/algorithm/parallel/rnea.hpp"
 #include "pinocchio/algorithm/rnea-derivatives.hpp"
+#include "pinocchio/algorithm/rnea-second-order-derivatives.hpp"
 
 #include "pinocchio/spatial.hpp"
 #include "pinocchio/algorithm/frames.hpp"
@@ -95,14 +97,65 @@ Index DecentralizedOcp::eval_RSQrqt(const Scalar *objective_scale, const Scalar 
 
     if (k == _K - 1)
     {                              
-        blasfeo_diare_wrap(nx, s * 2 * _q.x_K, res, 0, 0);
+        blasfeo_diare_wrap(nx, s * 2 * _qcost.x_K, res, 0, 0);
         // return 0;
     }                              
     else
     {                              
-        blasfeo_diare_wrap(nu, s * 2 * _q.u_k, res, 0, 0);
-        blasfeo_diare_wrap(nx, s * 2 * _q.x_k, res, nu, nu);
+        blasfeo_diare_wrap(nu, s * 2 * _qcost.u_k, res, 0, 0);
+        blasfeo_diare_wrap(nx, s * 2 * _qcost.x_k, res, nu, nu);
     }
+
+    /* ==== Full RNEA Hessian Implementation ====
+    const int thread_id = omp_get_thread_num();
+    const pinocchio::Model & _model = _model_pool->getModels()[(size_t)thread_id];
+    pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
+    dibiman::RNEASecondOrderDerivatives & _m = _rnea_derivatives_pool[(size_t)thread_id];
+    _m.setZero();
+
+    // Put RNEA and Jacobian Derivatives here
+    Map<const VectorXd> _q  (states_k, nq);
+    Map<const VectorXd> _v  (states_k + nq, nq);
+    Map<const VectorXd> _a  (inputs_k, nq);
+    TensorMap<const Tensor<double, 1>> _lam_eq  (lam_eq_k, nq);
+
+    ComputeRNEASecondOrderDerivatives(_model, _data, _q, _v, _a);
+
+    // Tensor contraction
+    const Eigen::array<Eigen::IndexPair<int>, 1> dims = { Eigen::IndexPair<int>(0, 0) };
+    _m.qq = _lam_eq.contract(_data.d2tau_dqdq, dims);
+    _m.vv = _lam_eq.contract(_data.d2tau_dvdv, dims);
+    _m.qv = _lam_eq.contract(_data.d2tau_dqdv, dims);
+    _m.aq = _lam_eq.contract(_data.d2tau_dadq, dims);
+
+    Map<MatrixXd> _qq_mat(_m.qq.data(), nq, nq);
+    Map<MatrixXd> _vv_mat(_m.vv.data(), nq, nq);
+    Map<MatrixXd> _qv_mat(_m.qv.data(), nq, nq);
+    Map<MatrixXd> _aq_mat(_m.aq.data(), nq, nq);
+
+    _qq_mat.diagonal().array() += s * 2 * _qcost.x_k;
+    _vv_mat.diagonal().array() += s * 2 * _qcost.x_k;
+
+    blasfeo_pack_dmat(nq, nq,
+            _qq_mat.data(), _qq_mat.outerStride(), 
+            res, nx, nx);
+    blasfeo_pack_dmat(nq, nq,
+            _vv_mat.data(), _vv_mat.outerStride(), 
+            res, nx + nq, nx + nq);
+    blasfeo_pack_dmat(nq, nq,
+            _qv_mat.data(), _qv_mat.outerStride(), 
+            res, nx, nx + nq);
+    blasfeo_pack_dmat(nq, nq,
+            _aq_mat.data(), _aq_mat.outerStride(), 
+            res, 0, nx);
+
+    blasfeo_pack_tran_dmat(nq, nq,
+            _qv_mat.data(), _qv_mat.outerStride(), 
+            res, nx + nq, nx);
+    blasfeo_pack_tran_dmat(nq, nq,
+            _aq_mat.data(), _aq_mat.outerStride(), 
+            res, nx, 0);
+            */
     return 0;
 };
 Index DecentralizedOcp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
@@ -240,7 +293,7 @@ Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inp
         for (int i = 0; i < nx; ++i)
         {
             const Scalar x_err = states_k[i] - xref[i];
-            res[i] = 2 * _q.x_K * x_err * s;
+            res[i] = 2 * _qcost.x_K * x_err * s;
         }
     }
     else
@@ -250,8 +303,8 @@ Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inp
             const Scalar u_err = inputs_k[i] - uref[i];
             const Scalar x_err = states_k[i] - xref[i];
 
-            res[i] = 2 * _q.u_k * u_err * s;
-            res[nx + i] = 2 * _q.x_k * x_err * s;
+            res[i] = 2 * _qcost.u_k * u_err * s;
+            res[nx + i] = 2 * _qcost.x_k * x_err * s;
         }
     }
     return 0;
@@ -267,7 +320,7 @@ Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inpu
         for (int i = 0; i < nx; ++i)
         {
             const Scalar err = states_k[i] - xref[i];
-            *res+= _q.x_K * err * err;
+            *res+= _qcost.x_K * err * err;
         }
         *res*= s;
     }
@@ -277,7 +330,7 @@ Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inpu
         {
             const Scalar u_err = inputs_k[i] - uref[i];
             const Scalar x_err = states_k[i] - xref[i];
-            *res+= _q.u_k * u_err * u_err + _q.x_k * x_err * x_err;
+            *res+= _qcost.u_k * u_err * u_err + _qcost.x_k * x_err * x_err;
         }
         *res*= s;
     }

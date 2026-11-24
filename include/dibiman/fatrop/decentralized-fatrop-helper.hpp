@@ -27,7 +27,7 @@ struct DecentralizedFatropHelper
     std::vector<SpatialTwistDerivatives> _twist_derivatives_pool;
 
     std::vector<pinocchio::Motion> _twist_pool;
-    //std::vector<RNEASecondOrderDerivatives> _rnea_derivatives_pool; unused as it takes too long
+    std::vector<RNEASecondOrderDerivatives> _rnea_derivatives_pool; // unused as it takes too long
 
     Eigen::VectorXd xref;
     Eigen::VectorXd uref;
@@ -36,7 +36,7 @@ struct DecentralizedFatropHelper
     //Eigen::VectorXd v_0;
 
     /* written into outside initializer */
-    OcpCosts _q;
+    OcpCosts _qcost;
     bool _warm = false;
 
     std::vector<Eigen::VectorXd> _warm_u;
@@ -67,9 +67,9 @@ struct DecentralizedFatropHelper
         x0.resize(nx);
         x0.setZero();
 
-        _q.x_k = 1;
-        _q.u_k = 1;
-        _q.x_K = 10;
+        _qcost.x_k = 1;
+        _qcost.u_k = 1;
+        _qcost.x_K = 10;
 
         _dt = 0.05;
         _K = K;
@@ -91,6 +91,7 @@ struct DecentralizedFatropHelper
         for (int i = 0; i < n_threads; ++i)
         {
             _twist_derivatives_pool.emplace_back(nv);
+            _rnea_derivatives_pool.emplace_back(nv);
             _twist_pool.emplace_back();
         }
     }
