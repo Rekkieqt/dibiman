@@ -17,3 +17,6 @@ target_link_libraries(traj-test PRIVATE pinocchio::pinocchio Eigen3::Eigen)
 target_link_libraries(fop-test PRIVATE pinocchio::pinocchio Eigen3::Eigen scs::scsdir)
 target_link_libraries(eval-bench PRIVATE dibiman pinocchio::pinocchio Eigen3::Eigen) 
 target_link_libraries(force-bench PRIVATE dibiman pinocchio::pinocchio Eigen3::Eigen iDynTree::idyntree-estimation iDynTree::idyntree-model)
+
+target_compile_options(nmpc_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -O3>)

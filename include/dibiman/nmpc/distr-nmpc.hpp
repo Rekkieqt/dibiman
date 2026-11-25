@@ -26,10 +26,9 @@ namespace dibiman {
         std::shared_ptr<IpAlgorithm<OcpType>> ip_alg; // = builder.build(); // algo
         // fatrop::IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedOcp>>(ocp));
 
-        /* trajectory generator class */
-        std::shared_ptr<TrajectoryGenerator> traj;
-
         public:
+            /* trajectory generator class */
+            std::shared_ptr<TrajectoryGenerator> traj;
             
             DecentralizedNMPC(const pinocchio::Model &, const std::string &, const int &, const int &); // , const bool& = false);
             /* initialized the ocp + data
@@ -44,10 +43,15 @@ namespace dibiman {
             /* set delta t
              */
 
+            void setTraj(const Eigen::VectorXd &, const Eigen::VectorXd &, const double);
+            /* send q0, qf and travel time to generate a trajectory
+             */
+
             void setRef(const Eigen::VectorXd &);
             /* set q reference for point-to-point control
              * also calculaters tau ref to be gravity compensating at q ref
              */
+
             void setWarm(void);
             /* fill the get_initial_* with data from previous solve
              */

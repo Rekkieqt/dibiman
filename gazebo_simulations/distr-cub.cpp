@@ -82,7 +82,6 @@ main()
     const Eigen::Vector3d right_rpy(M_PI/2.0f, M_PI, 0);
     const Eigen::Matrix3d r_R = pinocchio::rpy::rpyToMatrix(right_rpy);
     pinocchio::SE3 r_H_ref(r_R, pos_ref);
-    std::cout << "Right H ref : " << r_H_ref << std::endl;
 
     /* ______________ Inverse Kinematics ______________ */
 
@@ -94,21 +93,24 @@ main()
             r_H_ref,
             ee_idx);
             */
+
     Eigen::VectorXd qref = pinocchio::randomConfiguration(model);
 
     man.setRef(qref);
+    man.setTraj(q, qref, 10);
+
     man_cas.setRef(qref);
 
     /* ____________ Simulation _________________ */
 
-    const int T = 150;
+    const int T = 12;
     int N = (int)(T/dt);
 
     Eigen::VectorXd x_next(x.size());
     x << q, v;
 
-    /* casadi solver copies */
     Eigen::VectorXd x_cas, x_next_cas, tau_cas;
+    pinocchio::Motion s_twist;
     x_cas = x; 
     x_next_cas = x_next;
     tau_cas = tau;
@@ -116,23 +118,19 @@ main()
     for (int i = 0; i < N; i++) {
 
         tau = man.solve(x);
-        // std::cout << tau.transpose() << "\n\n";
         x_next = dibiman::descreteForwardDynamics(model, x, tau, dt);
         x = x_next;
 
-        // tau_cas = man_cas.solve(x_cas);
-        // std::cout << tau_cas << "\n\n";
-        // x_next_cas = dibiman::descreteForwardDynamics(model, x_cas, tau_cas, dt);
-        // x_cas = x_next_cas;
-
-        // pinocchio::forwardKinematics(model, data, x.head(model.nq));
-        // pinocchio::updateFramePlacements(model, data);
+        pinocchio::forwardKinematics(model, data, x.head(model.nq), x.tail(model.nv));
+        pinocchio::updateFramePlacements(model, data);
+        s_twist = getFrameVelocity(model, data, ee_idx, pinocchio::WORLD);
+        std::cout << "Spatial Twist: " << s_twist << "\n\n";
+        std::cout << "Spatial Twist Expected: " << man.traj->s_twist(0) << "\n\n";
+        std::cout << "Spatial Twist Diff Norm: " << (s_twist - man.traj->s_twist(0)).toVector().norm() << "\n\n";
 
     }
-    std::cout << "Final x: " << x.transpose() << "\n\n";
-    std::cout << "Desired q: " << qref.transpose() << "\n\n";
 
-    std::cout << "Final x_cas: " << x_cas.transpose() << "\n\n";
+    std::cout << "Final x: " << x.transpose() << "\n\n";
     std::cout << "Desired q: " << qref.transpose() << "\n\n";
     return 0;
 }

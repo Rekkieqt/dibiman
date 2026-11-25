@@ -55,21 +55,19 @@ Index DecentralizedOcp::get_nu(const Index k) const
 
 Index DecentralizedOcp::get_ng(const Index k) const
 {
-    int ng_size = nv;
-    if (_trajectory_control) ng_size += twist_t;
-    if (k == 0)
-    {
-        return ng_size += nx; // twist_t + nx + nv; 
-    }
-    else if (k == _K - 1)
-    {
-        return 0;
-    }
-    else
-    {
-        // if (trajectory_control)
-        return ng_size; // nv + twist_t;
-    }
+    int ng = nv;
+    /*
+     * if (k == 0) return ng + nx;
+     * if (k < _K - 1)
+     * {
+     *     if (_trajectory_control) ng += twist_t;
+     *     return ng;
+     * }
+     * else return twist_t;
+     */
+    if (k == 0)     return nv + nx + (_trajectory_control ? twist_t : 0);
+    if (k < _K - 1) return nv + (_trajectory_control ? twist_t : 0);
+    return _trajectory_control ? twist_t : 0;
 };
 
 Index DecentralizedOcp::get_ng_ineq(const Index k) const { return 0; };
@@ -98,14 +96,12 @@ Index DecentralizedOcp::eval_RSQrqt(const Scalar *objective_scale, const Scalar 
     if (k == _K - 1)
     {                              
         blasfeo_diare_wrap(nx, s * _qcost.x_K, res, 0, 0);
-        // return 0;
     }
     else
     {                            
         blasfeo_diare_wrap(nu, s * _qcost.u_k, res, 0, 0);
         blasfeo_diare_wrap(nx, s * _qcost.x_k, res, nu, nu);
     }
-
     /* ==== Full RNEA Hessian Implementation ====
     const int thread_id = omp_get_thread_num();
     const pinocchio::Model & _model = _model_pool->getModels()[(size_t)thread_id];
@@ -158,10 +154,9 @@ Index DecentralizedOcp::eval_RSQrqt(const Scalar *objective_scale, const Scalar 
             */
     return 0;
 };
+
 Index DecentralizedOcp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k, MAT *res, const Index k)
 {
-    if (k == _K - 1) return 0;
-
     /* RNEA constraint
      * h(q, v, a, tau) = rnea(q, v, a) - tau = 0
      * dh/da, dh/dtau, dh/dq, dh/dv = dh/d(uk, xk)
@@ -182,47 +177,59 @@ Index DecentralizedOcp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k,
     const pinocchio::Model & _model = _model_pool->getModels()[(size_t)thread_id];
     pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
 
-    // Put RNEA and Jacobian Derivatives here
     Map<const VectorXd> _q  (states_k, nq);
     Map<const VectorXd> _v  (states_k + nq, nq);
     Map<const VectorXd> _a  (inputs_k, nq);
 
-    pinocchio::computeRNEADerivatives(_model, _data, _q, _v, _a);
-
-    /// \note The results are stored in data.dtau_dq, data.dtau_dv and data.M which respectively
-    /// correspond
-    ///          to the partial derivatives of the joint torque vector with respect to the joint
-    ///          configuration, velocity and acceleration. As for pinocchio::crba, only the upper
-    ///          triangular part of data.M is filled.
-
-    // if (trajectory_control)
-
-    blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-    pinocchio::make_symmetric(_data.M);
-
-    blasfeo_pack_dmat(_data.M.rows(), _data.M.cols(), _data.M.data(), _data.M.outerStride(), res, 0, 0);
-    blasfeo_diare_wrap(nq, -1.f, res, nq, 0);
-    blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, 0);
-    blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, 0);
-
-    int x0_cols_offset = nq;
-    if (_trajectory_control)
+    /* the Jacobian of equality constraints hk(uk, xk) is transposed when packed into res */
+    fatrop::Index g_offset = 0;
+    /* row offsets for the variables ->
+     * column offsets depend on the size of the equality constraints h1, h2, ... , hn.
+     * a = 0
+     * tau = nv;
+     * q = 2*nv;
+     * v = 3*nv;
+     * nv = nq always for this problem */
+    if (k < _K - 1)
     {
+        pinocchio::computeRNEADerivatives(_model, _data, _q, _v, _a);
+        pinocchio::make_symmetric(_data.M);
+        /// \note The results are stored in data.dtau_dq, data.dtau_dv and data.M which respectively
+        /// correspond
+        ///          to the partial derivatives of the joint torque vector with respect to the joint
+        ///          configuration, velocity and acceleration. As for pinocchio::crba, only the upper
+        ///          triangular part of data.M is filled.
+        blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+        blasfeo_pack_dmat(_data.M.rows(), _data.M.cols(), _data.M.data(), _data.M.outerStride(), res, 0, g_offset); // 0 on the column is the g_offset
+        blasfeo_diare_wrap(nq, -1.f, res, nq, g_offset);
+        blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, g_offset);
+        blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, g_offset);
+        if (_trajectory_control) // if ((k > 0) && _trajectory_control)
+        {
+            g_offset += nv;
+            dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
+            _v_data.setZero();
+            /* Needs to be called after rnea derivatives or after forwardKinematics derivatives */
+            pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_idx, pinocchio::WORLD, _v_data.dq, _v_data.dv);
+            blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, nx, g_offset);
+            blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nx + nv, g_offset);
+        }
+        if (k == 0) // else if (k == 0)
+        {
+            g_offset += twist_t;
+            blasfeo_diare_wrap(nx, 1.f, res, nx, g_offset);
+        }
+    }
+    else if (_trajectory_control)
+    {
+        pinocchio::computeForwardKinematicsDerivatives(_model, _data, _q, _v);
         dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
         _v_data.setZero();
-
-        /* Needs to be called after rnea */
+        /* Needs to be called after rnea(_model, _data, _q, _v, _a) or after forwardKinematics(_model, _data, _q, _v) */
         pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_idx, pinocchio::WORLD, _v_data.dq, _v_data.dv);
-
-        blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, nx, nq);
-        blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nx + nv, nq);
-        x0_cols_offset += twist_t;
-    }
-
-    if (k == 0)
-    {
-        /* _trajectory_control -> offset on the x[0] = x_init equality */
-        blasfeo_diare_wrap(nx, 1.f, res, nu, x0_cols_offset);
+        blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+        blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, 0, g_offset);
+        blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nv, g_offset);
     }
     return 0;
 }
@@ -243,42 +250,48 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
     pinocchio::Data & _data = _model_pool->getDatas()[(size_t)thread_id];
     pinocchio::Motion & _twist = _twist_pool[(size_t)thread_id];
 
-    fatrop::Index k0_offset_q = nq;
-    fatrop::Index k0_offset_v = nx;
-
-    if (k == _K - 1) { return 0; }
-    else
+    fatrop::Index g_offset = 0;
+    Map<const VectorXd> _q  (states_k, nq);
+    Map<const VectorXd> _v  (states_k + nv, nv);
+    Map<const VectorXd> _a  (inputs_k, nv);
+    if (k < _K - 1)
     {
-        Map<const VectorXd> _q  (states_k, nq);
-        Map<const VectorXd> _v  (states_k + nq, nq);
-        Map<const VectorXd> _a  (inputs_k, nq);
-
         pinocchio::rnea(_model, _data, _q, _v, _a);
-
         for (int i = 0; i < nq; ++i)
         {
             res[i] = _data.tau[i] - inputs_k[nq + i];
         }
-        if (_trajectory_control) 
+        if (_trajectory_control) // if ((k > 0) && _trajectory_control)
         {
-            _twist = getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
+            g_offset += nv;
+            _twist = pinocchio::getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
             const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
             for (int i = 0; i < twist_t; ++i)
             {
-                res[nq + i] = _twist_err.toVector()[i];
+                res[g_offset + i] = _twist_err.toVector()[i];
                 // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
             }
-            k0_offset_q += twist_t;
-            k0_offset_v += twist_t;
         }
-    }
-
-    if (k == 0)
-    {
-        for (int i = 0; i < nq; ++i)
+        if (k == 0) // else if (k == 0)
         {
-            res[k0_offset_q + i] = states_k[i] - x0[i]; // - ... q0
-            res[k0_offset_v + i] = states_k[i + nq] - x0[i + nq]; // - ... v0
+            g_offset += twist_t;
+            for (int i = 0; i < nq; ++i)
+            {
+                res[g_offset + i] = states_k[i] - x0[i]; // - q0
+                res[g_offset + nv + i] = states_k[i + nv] - x0[i + nv]; // - v0
+            }
+        }
+        return 0;
+    }
+    else if (_trajectory_control)
+    {
+        pinocchio::forwardKinematics(_model, _data, _q, _v);
+        _twist = pinocchio::getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
+        const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
+        for (int i = 0; i < twist_t; ++i)
+        {
+            res[i] = _twist_err.toVector()[i];
+            // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
         }
     }
     return 0;

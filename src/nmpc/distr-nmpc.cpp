@@ -19,12 +19,12 @@ DecentralizedNMPC::DecentralizedNMPC(
         const int & n_threads
         )
 {
-    ocp = std::make_shared<DecentralizedOcp>(model, ee_frame_str, n_threads, K);
+    ocp = std::make_shared<DecentralizedOcp>(model, ee_frame_str, n_threads, K, true);
     IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedManipulatorStatic>>(ocp));
     OptionRegistry options;
     ip_alg = builder.with_options_registry(&options).build();
     options.set_option("suppress_banner", true);
-    options.set_option("print_level", 0);
+    options.set_option("print_level", 1);
     ip_data = builder.get_ipdata();
 
     // trajectory class
@@ -45,6 +45,22 @@ DecentralizedNMPC::setCosts(const OcpCosts & q)
 }
 
 void
+DecentralizedNMPC::setTraj(const Eigen::VectorXd & qi, const Eigen::VectorXd & qf, const double T)
+{
+
+    pinocchio::Model & model = ocp->_model;
+    pinocchio::Data & data = ocp->_data;
+    pinocchio::forwardKinematics(model, data, qi);
+    pinocchio::updateFramePlacements(model, data);
+    const pinocchio::SE3 initial_X = data.oMf[ocp->_ee_frame_idx];
+
+    pinocchio::forwardKinematics(model, data, qf);
+    pinocchio::updateFramePlacements(model, data);
+    const pinocchio::SE3 final_X = data.oMf[ocp->_ee_frame_idx];
+    traj->setData(initial_X, final_X, T);
+}
+
+void
 DecentralizedNMPC::setRef(const Eigen::VectorXd & qr)
 {
     ocp->xref.head(ocp->nq) = qr;
@@ -55,6 +71,7 @@ DecentralizedNMPC::setRef(const Eigen::VectorXd & qr)
             Eigen::VectorXd::Zero(ocp->nv), 
             Eigen::VectorXd::Zero(ocp->nv));
 }
+
 void
 DecentralizedNMPC::setWarm()
 {
@@ -95,11 +112,11 @@ DecentralizedNMPC::solve(const Eigen::VectorXd & x0)
 {
     ocp->x0 = x0;
     auto ret = ip_alg->optimize();
-    if (ret == IpSolverReturnFlag::StopAtAcceptablePoint) std::cout << "AcceptablePointFlag\n\n";
     const auto &info = ip_data->info();
     const VecRealView & x_opt = ip_data->current_iterate().primal_x();
     const Scalar *u = x_opt.data() + info.offsets_primal_u[0] + ocp->nv;
     setWarm();
+    traj->step(ocp->_dt);
 
     Eigen::VectorXd tau(ocp->nv); 
     std::memcpy(tau.data(), u, (size_t)ocp->nv * sizeof(Scalar));

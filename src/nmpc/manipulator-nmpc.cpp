@@ -121,7 +121,7 @@ ManipulatorNMPC::create(void) {
             }  
         }
     };
-    solverInfo(solver);
+    // solverInfo(solver);
 };
 
 Eigen::VectorXd
