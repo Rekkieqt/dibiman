@@ -20,13 +20,14 @@ namespace dibiman {
     typedef OcpAbstractTpl<dibiman::DecentralizedManipulatorStatic> DecentralizedOcp;
 
     class DecentralizedNMPC {
-        /* standard point-to-point */
-        std::shared_ptr<DecentralizedOcp> ocp;
-        std::shared_ptr<IpData<OcpType>> ip_data;
-        std::shared_ptr<IpAlgorithm<OcpType>> ip_alg; // = builder.build(); // algo
-        // fatrop::IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedOcp>>(ocp));
 
         public:
+            /* standard point-to-point */
+            std::shared_ptr<DecentralizedOcp> ocp;
+            std::shared_ptr<IpData<OcpType>> ip_data;
+            std::shared_ptr<IpAlgorithm<OcpType>> ip_alg; // = builder.build(); // algo
+            // fatrop::IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedOcp>>(ocp));
+            //
             /* trajectory generator class */
             std::shared_ptr<TrajectoryGenerator> traj;
             

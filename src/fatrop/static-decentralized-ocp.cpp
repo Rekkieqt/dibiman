@@ -67,7 +67,7 @@ Index DecentralizedOcp::get_ng(const Index k) const
      */
     if (k == 0)     return nv + nx + (_trajectory_control ? twist_t : 0);
     if (k < _K - 1) return nv + (_trajectory_control ? twist_t : 0);
-    return _trajectory_control ? twist_t : 0;
+    else return 0;
 };
 
 Index DecentralizedOcp::get_ng_ineq(const Index k) const { return 0; };
@@ -204,33 +204,33 @@ Index DecentralizedOcp::eval_Ggt(const Scalar *inputs_k, const Scalar *states_k,
         blasfeo_diare_wrap(nq, -1.f, res, nq, g_offset);
         blasfeo_pack_tran_dmat(_data.dtau_dq.rows(), _data.dtau_dq.cols(), _data.dtau_dq.data(), _data.dtau_dq.outerStride(), res, nx, g_offset);
         blasfeo_pack_tran_dmat(_data.dtau_dv.rows(), _data.dtau_dv.cols(), _data.dtau_dv.data(), _data.dtau_dv.outerStride(), res, nx + nq, g_offset);
+        g_offset += nv;
         if (_trajectory_control) // if ((k > 0) && _trajectory_control)
         {
-            g_offset += nv;
             dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
             _v_data.setZero();
             /* Needs to be called after rnea derivatives or after forwardKinematics derivatives */
             pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_idx, pinocchio::WORLD, _v_data.dq, _v_data.dv);
             blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, nx, g_offset);
             blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nx + nv, g_offset);
+            g_offset += twist_t;
         }
         if (k == 0) // else if (k == 0)
         {
-            g_offset += twist_t;
             blasfeo_diare_wrap(nx, 1.f, res, nx, g_offset);
         }
     }
-    else if (_trajectory_control)
-    {
-        pinocchio::computeForwardKinematicsDerivatives(_model, _data, _q, _v);
-        dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
-        _v_data.setZero();
-        /* Needs to be called after rnea(_model, _data, _q, _v, _a) or after forwardKinematics(_model, _data, _q, _v) */
-        pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_idx, pinocchio::WORLD, _v_data.dq, _v_data.dv);
-        blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-        blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, 0, g_offset);
-        blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nv, g_offset);
-    }
+    //else if (_trajectory_control)
+    //{
+    //    pinocchio::computeForwardKinematicsDerivatives(_model, _data, _q, _v);
+    //    dibiman::SpatialTwistDerivatives & _v_data = _twist_derivatives_pool[(size_t)thread_id];
+    //    _v_data.setZero();
+    //    /* Needs to be called after rnea(_model, _data, _q, _v, _a) or after forwardKinematics(_model, _data, _q, _v) */
+    //    pinocchio::getFrameVelocityDerivatives(_model, _data, _ee_frame_idx, pinocchio::WORLD, _v_data.dq, _v_data.dv);
+    //    blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+    //    blasfeo_pack_tran_dmat(_v_data.dq.rows(), _v_data.dq.cols(), _v_data.dq.data(), _v_data.dq.outerStride(), res, 0, g_offset);
+    //    blasfeo_pack_tran_dmat(_v_data.dv.rows(), _v_data.dv.cols(), _v_data.dv.data(), _v_data.dv.outerStride(), res, nv, g_offset);
+    //}
     return 0;
 }
 Index DecentralizedOcp::eval_b(const Scalar *states_kp1, const Scalar *inputs_k, const Scalar *states_k,
@@ -261,9 +261,9 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
         {
             res[i] = _data.tau[i] - inputs_k[nq + i];
         }
+        g_offset += nv;
         if (_trajectory_control) // if ((k > 0) && _trajectory_control)
         {
-            g_offset += nv;
             _twist = pinocchio::getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
             const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
             for (int i = 0; i < twist_t; ++i)
@@ -271,10 +271,10 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
                 res[g_offset + i] = _twist_err.toVector()[i];
                 // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
             }
+            g_offset += twist_t;
         }
         if (k == 0) // else if (k == 0)
         {
-            g_offset += twist_t;
             for (int i = 0; i < nq; ++i)
             {
                 res[g_offset + i] = states_k[i] - x0[i]; // - q0
@@ -283,17 +283,17 @@ Index DecentralizedOcp::eval_g(const Scalar *inputs_k, const Scalar *states_k, S
         }
         return 0;
     }
-    else if (_trajectory_control)
-    {
-        pinocchio::forwardKinematics(_model, _data, _q, _v);
-        _twist = pinocchio::getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
-        const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
-        for (int i = 0; i < twist_t; ++i)
-        {
-            res[i] = _twist_err.toVector()[i];
-            // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
-        }
-    }
+    // else if (_trajectory_control)
+    // {
+    //     pinocchio::forwardKinematics(_model, _data, _q, _v);
+    //     _twist = pinocchio::getFrameVelocity(_model, _data, _ee_frame_idx, pinocchio::WORLD);
+    //     const pinocchio::Motion _twist_err = _twist - _traj->s_twist(_dt * k);
+    //     for (int i = 0; i < twist_t; ++i)
+    //     {
+    //         res[i] = _twist_err.toVector()[i];
+    //         // res[nq + i] = _twist.toVector()[i] - _ref_twist.toVector()[i]; // - _twist_ref[i]; // vel_ref uncreated yet
+    //     }
+    // }
     return 0;
 };
 Index DecentralizedOcp::eval_rq(const Scalar *objective_scale, const Scalar *inputs_k, const Scalar *states_k,
@@ -336,7 +336,7 @@ Index DecentralizedOcp::eval_L(const Scalar *objective_scale, const Scalar *inpu
             *res+= _qcost.x_K * err * err;
         }
         *res*= .5 * s;
-    } /* 0 cost for initial state, could turn hessian semi-def */
+    }
     else
     {
         for (int i = 0; i < nu; ++i)

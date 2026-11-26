@@ -10,6 +10,7 @@ add_executable(traj-test trajectory-gen.cpp)
 add_executable(fop-test force-solver-scs.cpp)
 add_executable(eval-bench eval-bench.cpp)
 add_executable(force-bench force-estimation-bench.cpp)
+add_executable(twist-traj-test twist-trajectory-test.cpp)
 
 target_link_libraries(nmpc_test PRIVATE dibiman fatrop blasfeo pinocchio::pinocchio Eigen3::Eigen OpenMP::OpenMP_CXX)
 target_link_libraries(fatrop_ik PRIVATE fatrop blasfeo)
@@ -17,6 +18,7 @@ target_link_libraries(traj-test PRIVATE pinocchio::pinocchio Eigen3::Eigen)
 target_link_libraries(fop-test PRIVATE pinocchio::pinocchio Eigen3::Eigen scs::scsdir)
 target_link_libraries(eval-bench PRIVATE dibiman pinocchio::pinocchio Eigen3::Eigen) 
 target_link_libraries(force-bench PRIVATE dibiman pinocchio::pinocchio Eigen3::Eigen iDynTree::idyntree-estimation iDynTree::idyntree-model)
+target_link_libraries(twist-traj-test PRIVATE dibiman pinocchio::pinocchio Eigen3::Eigen)
 
 target_compile_options(nmpc_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -O3>)

@@ -26,6 +26,8 @@
 #include "dibiman/utils/robot.hpp"
 #include "dibiman/utils/utils.hpp"
 
+#include <fatrop/fatrop.hpp>
+
 using namespace pinocchio;
 
 int 
@@ -105,17 +107,46 @@ main()
 
     const int T = 12;
     int N = (int)(T/dt);
+    pinocchio::Motion s_twist;
 
     Eigen::VectorXd x_next(x.size());
     x << q, v;
 
-    Eigen::VectorXd x_cas, x_next_cas, tau_cas;
-    pinocchio::Motion s_twist;
-    x_cas = x; 
-    x_next_cas = x_next;
-    tau_cas = tau;
+    /* _________________ Comparison of returned vs expected _________________ */
 
-    for (int i = 0; i < N; i++) {
+    std::vector<pinocchio::Motion> twist_ref_list, twist_real_list;
+    for (int k = 0; k < horizon; ++k)
+    {
+        pinocchio::Motion ref_twist = man.traj->s_twist(k * dt);
+        twist_ref_list.push_back(ref_twist);
+        // std::cout << "ref: " << ref_twist << "\n\n";
+    }
+    tau = man.solve(x);
+    const auto & info = man.ip_data->info();
+    for (int k = 0; k < horizon; ++k)
+    {
+        assert(man.ip_data);
+        assert(horizon <= info.dims.K);
+        const fatrop::VecRealView & xsol = man.ip_data->current_iterate().primal_x();
+        assert(xsol.m() == info.number_of_primal_variables);
+        const fatrop::Scalar *xs = xsol.data() + info.offsets_primal_x[k];
+        Eigen::VectorXd _xsol(2 * model.nv);
+        std::memcpy(_xsol.data(), xs, (size_t)man.ocp->nx * sizeof(fatrop::Scalar));
+        // for (int i = 0; i < (2*model.nv); ++i) _xsol[i] = xs[i];
+        pinocchio::forwardKinematics(model, data, _xsol.head(model.nq), _xsol.tail(model.nv));
+        pinocchio::Motion real_twist = pinocchio::getFrameVelocity(model, data, ee_idx, pinocchio::WORLD);
+        twist_real_list.push_back(real_twist);
+        // std::cout << "real: " << real_twist << "\n\n";
+    }
+
+    for (int k = 0; k < horizon; ++k)
+    {
+        pinocchio::Motion diff = twist_real_list[k] - twist_real_list[k];
+        // std::cout << "diff: " << diff.toVector().norm() << "\n\n";
+    }
+
+    /* _________________ NMPC simulation over T time _________________ */
+    for (int i = 0; i < 4; i++) {
 
         tau = man.solve(x);
         x_next = dibiman::descreteForwardDynamics(model, x, tau, dt);
@@ -124,12 +155,13 @@ main()
         pinocchio::forwardKinematics(model, data, x.head(model.nq), x.tail(model.nv));
         pinocchio::updateFramePlacements(model, data);
         s_twist = getFrameVelocity(model, data, ee_idx, pinocchio::WORLD);
-        std::cout << "Spatial Twist: " << s_twist << "\n\n";
-        std::cout << "Spatial Twist Expected: " << man.traj->s_twist(0) << "\n\n";
-        std::cout << "Spatial Twist Diff Norm: " << (s_twist - man.traj->s_twist(0)).toVector().norm() << "\n\n";
+        // std::cout << "Spatial Twist: " << s_twist << "\n\n";
+        // std::cout << "Spatial Twist Expected: " << man.traj->s_twist(0) << "\n\n";
+        // std::cout << "Spatial Twist Diff Norm: " << (s_twist - man.traj->s_twist(0)).toVector().norm() << "\n\n";
 
     }
-
+    // std::cout << "Return flag: " << int(ret) << std::endl;
+    std::cout << man.ip_data->timing_statistics() << std::endl;
     std::cout << "Final x: " << x.transpose() << "\n\n";
     std::cout << "Desired q: " << qref.transpose() << "\n\n";
     return 0;

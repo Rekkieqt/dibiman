@@ -19,12 +19,12 @@ DecentralizedNMPC::DecentralizedNMPC(
         const int & n_threads
         )
 {
-    ocp = std::make_shared<DecentralizedOcp>(model, ee_frame_str, n_threads, K, true);
+    ocp = std::make_shared<DecentralizedOcp>(model, ee_frame_str, K, n_threads, true);
     IpAlgBuilder<OcpType> builder(std::make_shared<NlpOcpTpl<DecentralizedManipulatorStatic>>(ocp));
     OptionRegistry options;
     ip_alg = builder.with_options_registry(&options).build();
     options.set_option("suppress_banner", true);
-    options.set_option("print_level", 1);
+    // options.set_option("print_level", 1);
     ip_data = builder.get_ipdata();
 
     // trajectory class
@@ -111,7 +111,8 @@ Eigen::VectorXd
 DecentralizedNMPC::solve(const Eigen::VectorXd & x0)
 {
     ocp->x0 = x0;
-    auto ret = ip_alg->optimize();
+    auto flag = ip_alg->optimize();
+    std::cout << "Return flag: " << int(flag) << std::endl;
     const auto &info = ip_data->info();
     const VecRealView & x_opt = ip_data->current_iterate().primal_x();
     const Scalar *u = x_opt.data() + info.offsets_primal_u[0] + ocp->nv;

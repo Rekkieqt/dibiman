@@ -228,6 +228,7 @@ namespace fatrop
         grad_s.block(info.number_of_g_eq_slack, 0) = 0;
         const Scalar *primal_x_p = primal_x.data();
         Scalar *grad_x_p = grad_x.data();
+#pragma omp parallel for schedule(static)
         for (Index k = 0; k < info.dims.K; k++)
         {
             // Read state/control values from the *primal* (manifold) variable vector.
@@ -249,6 +250,7 @@ namespace fatrop
     {
         res = 0;
         const Scalar *primal_x_p = primal_x.data();
+#pragma omp parallel for schedule(static)
         for (Index k = 0; k < info.dims.K; k++)
         {
             Scalar ret = 0;
